@@ -10,7 +10,7 @@
 
 ```bash
 npm install
-npm run dev     # 启动开发服务器，默认 http://localhost:5173
+npm run dev     # 启动开发服务器，默认端口 5173
 ```
 
 生产构建：
