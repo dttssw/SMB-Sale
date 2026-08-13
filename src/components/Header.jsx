@@ -1,4 +1,4 @@
-export default function Header({ today, onReset }) {
+export default function Header({ today, onClear }) {
   return (
     <header className="header">
       <div className="header-left">
@@ -10,9 +10,9 @@ export default function Header({ today, onReset }) {
       </div>
       <div className="header-right">
         <span className="today-chip">📅 {today}</span>
-        {onReset && (
-          <button className="btn btn-ghost" onClick={onReset}>
-            重置演示数据
+        {onClear && (
+          <button className="btn btn-ghost" onClick={onClear}>
+            🗑 清空数据
           </button>
         )}
       </div>

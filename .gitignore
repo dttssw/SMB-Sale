@@ -19,3 +19,6 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# SQLite database (generated on first server start)
+server/data/

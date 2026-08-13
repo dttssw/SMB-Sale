@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { useLocalStorage } from './hooks/useLocalStorage.js';
-import { getSeedContracts, getSeedProspects, getSeedDeals } from './data/seed.js';
+import { useDbData } from './hooks/useDbData.js';
+import { api } from './api.js';
 import { daysUntil, formatCnDate, monthOf, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
 import Header from './components/Header.jsx';
@@ -11,8 +11,6 @@ import RevenuePanel from './components/RevenuePanel.jsx';
 import Modal from './components/Modal.jsx';
 import { ContractForm, ProspectForm, DealForm } from './components/forms.jsx';
 
-const STORAGE_KEYS = ['smb.contracts.v1', 'smb.prospects.v1', 'smb.deals.v1'];
-
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 const modalTitle = (m) => {
@@ -22,10 +20,18 @@ const modalTitle = (m) => {
 };
 
 export default function App() {
-  const [contracts, setContracts] = useLocalStorage('smb.contracts.v1', getSeedContracts);
-  const [prospects, setProspects] = useLocalStorage('smb.prospects.v1', getSeedProspects);
-  const [deals, setDeals] = useLocalStorage('smb.deals.v1', getSeedDeals);
+  const contractsDb = useDbData('contracts');
+  const prospectsDb = useDbData('prospects');
+  const dealsDb = useDbData('deals');
   const [modal, setModal] = useState(null);
+  const [actionError, setActionError] = useState('');
+
+  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading;
+  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error;
+
+  const contracts = contractsDb.data;
+  const prospects = prospectsDb.data;
+  const deals = dealsDb.data;
 
   const stats = useMemo(() => {
     const overdue = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
@@ -46,44 +52,119 @@ export default function App() {
     );
     const renewalPct = renewalTotal + newTotal > 0 ? Math.round((renewalTotal / (renewalTotal + newTotal)) * 100) : 0;
     return { overdue, exp30, renewalTotal, newTotal, monthRenewal, monthNew, renewalPct };
-  }, [contracts, prospects, deals]);
+  }, [contracts, deals]);
 
-  const saveContract = (data) => {
-    if (data.id) setContracts(contracts.map((c) => (c.id === data.id ? data : c)));
-    else setContracts([{ ...data, id: uid() }, ...contracts]);
-    setModal(null);
+  const saveContract = async (data) => {
+    try {
+      if (data.id) await contractsDb.update(data);
+      else await contractsDb.create({ ...data, id: uid() });
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
-  const saveProspect = (data) => {
-    if (data.id) setProspects(prospects.map((p) => (p.id === data.id ? data : p)));
-    else setProspects([{ ...data, id: uid() }, ...prospects]);
-    setModal(null);
+  const saveProspect = async (data) => {
+    try {
+      if (data.id) await prospectsDb.update(data);
+      else await prospectsDb.create({ ...data, id: uid() });
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
-  const saveDeal = (data) => {
-    setDeals([{ ...data, id: uid() }, ...deals]);
-    setModal(null);
+  const saveDeal = async (data) => {
+    try {
+      await dealsDb.create({ ...data, id: uid() });
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
-  const removeContract = (id) => {
-    if (window.confirm('确认删除该在约客户？')) setContracts(contracts.filter((c) => c.id !== id));
+  const removeContract = async (id) => {
+    if (!window.confirm('确认删除该在约客户？')) return;
+    try {
+      await contractsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
-  const removeProspect = (id) => {
-    if (window.confirm('确认删除该跟进客户？')) setProspects(prospects.filter((p) => p.id !== id));
+  const removeProspect = async (id) => {
+    if (!window.confirm('确认删除该跟进客户？')) return;
+    try {
+      await prospectsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
   };
 
-  const resetData = () => {
-    if (!window.confirm('将清除本地所有数据并恢复为演示数据，确定吗？')) return;
-    STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
-    window.location.reload();
+  const clearAll = async () => {
+    if (!window.confirm('将清空数据库中全部数据（在约客户、跟进客户、成交记录），确定吗？此操作不可恢复。')) return;
+    try {
+      setActionError('');
+      await api.clearAll();
+      await Promise.all([contractsDb.reload(), prospectsDb.reload(), dealsDb.reload()]);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const retry = () => {
+    setActionError('');
+    contractsDb.reload();
+    prospectsDb.reload();
+    dealsDb.reload();
   };
 
   const waitingContractCount = prospects.filter((p) => p.stage === 'contract').length;
 
+  if (loading) {
+    return (
+      <div className="container">
+        <Header today={formatCnDate(todayStr())} />
+        <div className="db-banner">🔄 正在连接数据库，加载数据…</div>
+      </div>
+    );
+  }
+
+  if (dbError) {
+    return (
+      <div className="container">
+        <Header today={formatCnDate(todayStr())} />
+        <div className="db-error">
+          <h3>⚠️ 无法连接数据服务</h3>
+          <p>{dbError}</p>
+          <p className="db-error-hint">
+            请先在终端运行 <code>npm run server</code> 启动后端（默认端口 3001），然后点击重试。
+          </p>
+          <button className="btn btn-primary" onClick={retry}>
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container">
-      <Header today={formatCnDate(todayStr())} onReset={resetData} />
+      <Header today={formatCnDate(todayStr())} onClear={clearAll} />
+
+      {actionError && (
+        <div className="db-banner error">
+          <span>⚠️ {actionError}</span>
+          <button className="icon-btn" onClick={() => setActionError('')} aria-label="关闭">
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="kpi-grid">
         <KpiCard label="在约客户" value={contracts.length} unit="家" icon="📇" sub={`已到期 ${stats.overdue} 家`} />
@@ -162,7 +243,7 @@ export default function App() {
       )}
 
       <footer className="footer">
-        SMB 销售工作台 · 数据保存在本地浏览器（localStorage），修改后实时生效，可随时重置演示数据
+        SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），由 Node API 读写，增删改实时生效
       </footer>
     </div>
   );
