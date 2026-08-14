@@ -28,5 +28,4 @@ export const api = {
   create: (resource, data) => request(`/${resource}`, { method: 'POST', body: JSON.stringify(data) }),
   update: (resource, id, data) => request(`/${resource}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (resource, id) => request(`/${resource}/${id}`, { method: 'DELETE' }),
-  clearAll: () => request('/data', { method: 'DELETE' }),
 };

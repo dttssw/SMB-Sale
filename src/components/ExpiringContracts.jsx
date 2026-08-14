@@ -28,7 +28,7 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }
       <div className="panel-head">
         <div>
           <h2>📋 在约客户 · 到期时间</h2>
-          <p className="panel-desc">按合同到期日排序，优先触达即将到期的客户，确保续约不流失</p>
+          <p className="panel-desc">按订阅到期日排序，优先触达即将到期的客户，确保续约不流失</p>
         </div>
         <button className="btn btn-primary" onClick={onAdd}>
           ＋ 新增在约客户
@@ -44,7 +44,6 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }
           <thead>
             <tr>
               <th>客户名称</th>
-              <th>负责人</th>
               <th>套餐</th>
               <th className="num">合同金额</th>
               <th className="num">到期时间</th>
@@ -60,9 +59,6 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }
                   <td>
                     <div className="cell-main">{c.name}</div>
                     <div className="cell-sub">{c.contact || '—'}</div>
-                  </td>
-                  <td>
-                    <span className="owner">{c.owner}</span>
                   </td>
                   <td>
                     <span className="plan-tag">{c.plan}</span>
@@ -85,7 +81,7 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }
             })}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="empty">
+                <td colSpan={6} className="empty">
                   暂无在约客户，点击右上角新增
                 </td>
               </tr>

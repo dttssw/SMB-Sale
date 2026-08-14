@@ -1,4 +1,4 @@
-export default function Header({ today, onClear }) {
+export default function Header({ today }) {
   return (
     <header className="header">
       <div className="header-left">
@@ -10,11 +10,6 @@ export default function Header({ today, onClear }) {
       </div>
       <div className="header-right">
         <span className="today-chip">📅 {today}</span>
-        {onClear && (
-          <button className="btn btn-ghost" onClick={onClear}>
-            🗑 清空数据
-          </button>
-        )}
       </div>
     </header>
   );

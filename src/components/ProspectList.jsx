@@ -31,7 +31,6 @@ export default function ProspectList({ prospects, onAdd, onEdit, onDelete }) {
           <thead>
             <tr>
               <th>客户名称</th>
-              <th>负责人</th>
               <th>跟进阶段</th>
               <th className="num">预计金额</th>
               <th className="num">上次跟进</th>
@@ -48,9 +47,6 @@ export default function ProspectList({ prospects, onAdd, onEdit, onDelete }) {
                   <td>
                     <div className="cell-main">{p.name}</div>
                     <div className="cell-sub">{p.contact || '—'}</div>
-                  </td>
-                  <td>
-                    <span className="owner">{p.owner}</span>
                   </td>
                   <td>
                     <Badge tone={stage.tone}>{stage.label}</Badge>
@@ -75,7 +71,7 @@ export default function ProspectList({ prospects, onAdd, onEdit, onDelete }) {
             })}
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="empty">
+                <td colSpan={6} className="empty">
                   暂无跟进中的新客户，点击右上角新增
                 </td>
               </tr>

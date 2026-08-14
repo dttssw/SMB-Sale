@@ -1,7 +1,5 @@
 export const PLANS = ['标准版', '专业版', '企业版', '旗舰版'];
 
-export const OWNERS = ['王小明', '李婷婷', '赵磊'];
-
 export const STAGES = [
   { key: 'initial', label: '初次沟通', tone: 'info' },
   { key: 'requirement', label: '需求确认', tone: 'violet' },

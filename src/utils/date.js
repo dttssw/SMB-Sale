@@ -36,3 +36,16 @@ export function monthOf(dateStr) {
   const d = parseDate(dateStr);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
+
+/**
+ * 订阅默认一年：返回「开始时间 + 1 年 − 1 天」的到期时间。
+ * 例如开始时间 2026-08-14 → 到期时间 2027-08-13。
+ */
+export function oneYearFrom(dateStr) {
+  if (!dateStr) return '';
+  const d = parseDate(dateStr);
+  const next = new Date(d.getFullYear() + 1, d.getMonth(), d.getDate() - 1);
+  const m = String(next.getMonth() + 1).padStart(2, '0');
+  const day = String(next.getDate()).padStart(2, '0');
+  return `${next.getFullYear()}-${m}-${day}`;
+}

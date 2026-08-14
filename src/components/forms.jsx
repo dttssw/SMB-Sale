@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { todayStr } from '../utils/date.js';
-import { OWNERS, PLANS, STAGES } from '../data/constants.js';
+import { oneYearFrom, todayStr } from '../utils/date.js';
+import { PLANS, STAGES } from '../data/constants.js';
 
 function Field({ label, required, children, full }) {
   return (
@@ -31,21 +31,26 @@ export function ContractForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
-    owner: initial?.owner || OWNERS[0],
     plan: initial?.plan || PLANS[1],
     contact: initial?.contact || '',
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
-    expiryDate: initial?.expiryDate || '',
+    expiryDate: initial?.expiryDate || oneYearFrom(todayStr()),
     note: initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
 
+  // 订阅默认一年：选定订阅开始时间后，到期时间自动设为一年后（前一天），到期时间仍可手动修改
+  const onStartDateChange = (e) => {
+    const v = e.target.value;
+    setForm((f) => ({ ...f, startDate: v, expiryDate: v ? oneYearFrom(v) : f.expiryDate }));
+  };
+
   const submit = (e) => {
     e.preventDefault();
     if (!form.name.trim()) return setError('请填写客户名称');
-    if (!form.expiryDate) return setError('请选择合同到期时间');
+    if (!form.expiryDate) return setError('请选择订阅到期时间');
     if (!(form.contractAmount > 0)) return setError('请填写合同金额');
     onSave({ ...form, name: form.name.trim(), contractAmount: Number(form.contractAmount) });
   };
@@ -54,15 +59,6 @@ export function ContractForm({ initial, onSave, onCancel }) {
     <form className="form" onSubmit={submit}>
       <Field label="客户名称" required full>
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
-      </Field>
-      <Field label="负责人" required>
-        <select value={form.owner} onChange={set('owner')}>
-          {OWNERS.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
       </Field>
       <Field label="套餐" required>
         <select value={form.plan} onChange={set('plan')}>
@@ -79,10 +75,10 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="合同金额（元）" required>
         <input type="number" min="0" step="100" value={form.contractAmount} onChange={set('contractAmount')} />
       </Field>
-      <Field label="合同开始时间" required>
-        <input type="date" value={form.startDate} onChange={set('startDate')} />
+      <Field label="订阅开始时间" required>
+        <input type="date" value={form.startDate} onChange={onStartDateChange} />
       </Field>
-      <Field label="合同到期时间" required full>
+      <Field label="订阅到期时间" required full>
         <input type="date" value={form.expiryDate} onChange={set('expiryDate')} />
       </Field>
       <Field label="备注" full>
@@ -98,7 +94,6 @@ export function ProspectForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
-    owner: initial?.owner || OWNERS[0],
     stage: initial?.stage || 'initial',
     contact: initial?.contact || '',
     expectedAmount: initial?.expectedAmount ?? 0,
@@ -120,15 +115,6 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     <form className="form" onSubmit={submit}>
       <Field label="客户名称" required full>
         <input value={form.name} onChange={set('name')} placeholder="如：无锡鼎盛机械" />
-      </Field>
-      <Field label="负责人" required>
-        <select value={form.owner} onChange={set('owner')}>
-          {OWNERS.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
       </Field>
       <Field label="跟进阶段" required>
         <select value={form.stage} onChange={set('stage')}>

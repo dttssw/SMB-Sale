@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
-import { api } from './api.js';
 import { daysUntil, formatCnDate, monthOf, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
 import Header from './components/Header.jsx';
@@ -106,17 +105,6 @@ export default function App() {
     }
   };
 
-  const clearAll = async () => {
-    if (!window.confirm('将清空数据库中全部数据（在约客户、跟进客户、成交记录），确定吗？此操作不可恢复。')) return;
-    try {
-      setActionError('');
-      await api.clearAll();
-      await Promise.all([contractsDb.reload(), prospectsDb.reload(), dealsDb.reload()]);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
   const retry = () => {
     setActionError('');
     contractsDb.reload();
@@ -155,7 +143,7 @@ export default function App() {
 
   return (
     <div className="container">
-      <Header today={formatCnDate(todayStr())} onClear={clearAll} />
+      <Header today={formatCnDate(todayStr())} />
 
       {actionError && (
         <div className="db-banner error">

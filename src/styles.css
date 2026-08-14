@@ -80,7 +80,6 @@ body {
 .table .ops { text-align: right; white-space: nowrap; }
 .cell-main { font-weight: 600; }
 .cell-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
-.owner { background: #f1f5f9; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: #475569; white-space: nowrap; }
 .plan-tag { color: var(--primary); font-size: 12px; background: var(--primary-soft); border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
 .empty { text-align: center; color: var(--muted); padding: 28px 0 !important; }
 .danger-text { color: var(--danger); font-weight: 600; }

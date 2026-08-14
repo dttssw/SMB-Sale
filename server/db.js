@@ -18,7 +18,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS contracts (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
-    owner          TEXT NOT NULL,
     plan           TEXT NOT NULL,
     contact        TEXT DEFAULT '',
     contractAmount REAL NOT NULL,
@@ -31,7 +30,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS prospects (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
-    owner          TEXT NOT NULL,
     stage          TEXT NOT NULL,
     contact        TEXT DEFAULT '',
     expectedAmount REAL NOT NULL,
@@ -50,3 +48,12 @@ db.exec(`
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）
+for (const table of ['contracts', 'prospects']) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some((c) => c.name === 'owner')) {
+    db.exec(`ALTER TABLE ${table} DROP COLUMN owner`);
+    console.log(`✅ 已从 ${table} 表移除遗留字段 owner`);
+  }
+}

@@ -17,14 +17,14 @@ app.use(express.json());
 const TABLES = ['contracts', 'prospects', 'deals'];
 
 const COLUMNS = {
-  contracts: ['id', 'name', 'owner', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
-  prospects: ['id', 'name', 'owner', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note'],
+  contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
 };
 
 const REQUIRED = {
-  contracts: ['id', 'name', 'owner', 'plan', 'contractAmount', 'startDate', 'expiryDate'],
-  prospects: ['id', 'name', 'owner', 'stage', 'expectedAmount'],
+  contracts: ['id', 'name', 'plan', 'contractAmount', 'startDate', 'expiryDate'],
+  prospects: ['id', 'name', 'stage', 'expectedAmount'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
 };
 
@@ -123,18 +123,6 @@ app.delete('/api/:table/:id', (req, res, next) => {
   try {
     const result = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
     if (!result.changes) return res.status(404).json({ error: '记录不存在' });
-    res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 清空全部业务数据：DELETE /api/data
-app.delete('/api/data', (req, res, next) => {
-  try {
-    db.transaction(() => {
-      for (const table of TABLES) db.prepare(`DELETE FROM ${table}`).run();
-    })();
     res.json({ ok: true });
   } catch (err) {
     next(err);
