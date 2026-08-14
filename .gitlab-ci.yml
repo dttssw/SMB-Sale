@@ -1,0 +1,35 @@
+workflow:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  tags:
+    - smb-sale
+  script:
+    - node -v && npm -v
+    - npm ci --no-audit --no-fund
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+      - server/
+      - package.json
+      - package-lock.json
+      - node_modules/
+    expire_in: 30 min
+
+deploy:
+  stage: deploy
+  tags:
+    - smb-sale
+  script:
+    - mkdir -p /opt/smb-sale
+    - rsync -a --delete --exclude 'server/data' ./ /opt/smb-sale/
+    - systemctl restart smb-sale
+    - sleep 3
+    - systemctl status smb-sale --no-pager -l || true
