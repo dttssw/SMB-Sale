@@ -73,7 +73,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
         <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
       </Field>
       <Field label="合同金额（元）" required>
-        <input type="number" min="0" step="100" value={form.contractAmount} onChange={set('contractAmount')} />
+        <input type="number" min="0" step="any" value={form.contractAmount} onChange={set('contractAmount')} />
       </Field>
       <Field label="订阅开始时间" required>
         <input type="date" value={form.startDate} onChange={onStartDateChange} />
@@ -129,7 +129,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
         <input value={form.contact} onChange={set('contact')} placeholder="如：钱总" />
       </Field>
       <Field label="预计金额（元）" required>
-        <input type="number" min="0" step="100" value={form.expectedAmount} onChange={set('expectedAmount')} />
+        <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
       </Field>
       <Field label="上次跟进日期">
         <input type="date" value={form.lastFollowUp} onChange={set('lastFollowUp')} />
@@ -170,7 +170,7 @@ export function DealForm({ onSave, onCancel }) {
         </select>
       </Field>
       <Field label="成交金额（元）" required>
-        <input type="number" min="0" step="100" value={form.amount} onChange={set('amount')} />
+        <input type="number" min="0" step="any" value={form.amount} onChange={set('amount')} />
       </Field>
       <Field label="签约日期" required full>
         <input type="date" value={form.date} onChange={set('date')} />
