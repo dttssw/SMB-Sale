@@ -28,4 +28,31 @@ export const api = {
   create: (resource, data) => request(`/${resource}`, { method: 'POST', body: JSON.stringify(data) }),
   update: (resource, id, data) => request(`/${resource}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (resource, id) => request(`/${resource}/${id}`, { method: 'DELETE' }),
+  // ---- 材料库 ----
+  listMaterials: () => request('/materials'),
+  uploadMaterial: async (file, note = '') => {
+    const form = new FormData();
+    form.append('file', file);
+    if (note) form.append('note', note);
+    let res;
+    try {
+      res = await fetch(`${BASE}/materials`, { method: 'POST', body: form });
+    } catch {
+      throw new Error('无法连接到数据服务，请确认后端已启动（npm run server）');
+    }
+    if (!res.ok) {
+      let message = `上传失败（HTTP ${res.status}）`;
+      try {
+        const body = await res.json();
+        if (body && body.error) message = body.error;
+      } catch {
+        /* 忽略非 JSON 错误体 */
+      }
+      throw new Error(message);
+    }
+    return res.json();
+  },
+  removeMaterial: (id) => request(`/materials/${id}`, { method: 'DELETE' }),
+  downloadUrl: (id) => `${BASE}/materials/${id}/download`,
+  fileUrl: (storedName) => `/uploads/${encodeURIComponent(storedName)}`,
 };

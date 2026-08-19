@@ -47,6 +47,17 @@ db.exec(`
     date      TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS materials (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,      -- 原始文件名
+    storedName TEXT NOT NULL,      -- 服务器存储文件名（随机生成，唯一）
+    mime       TEXT DEFAULT '',    -- MIME 类型
+    size       INTEGER NOT NULL,   -- 文件大小（字节）
+    ext        TEXT DEFAULT '',    -- 小写扩展名
+    note       TEXT DEFAULT '',    -- 备注
+    createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）

@@ -1,0 +1,29 @@
+{
+  // GitHub：GitHub 官方远程 MCP 服务器，OAuth 授权（VS Code 自动弹浏览器授权，无需 Token）
+  // GitLab：@zereight/mcp-gitlab 本地 stdio，连接内网 GitLab，Token 通过 ${input:} 在连接时提示输入，不落盘
+  "servers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "gitlab": {
+      "type": "stdio",
+      // 若本机 PATH 不同，用 `which zereight-mcp-gitlab` 确认后替换
+      "command": "/Users/ori/.local/bin/zereight-mcp-gitlab",
+      "env": {
+        "GITLAB_PERSONAL_ACCESS_TOKEN": "${input:gitlab-token}",
+        "GITLAB_API_URL": "http://172.16.43.132/api/v4",
+        // 设为 "true" 可切换为只读模式
+        "GITLAB_READ_ONLY_MODE": "false"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "gitlab-token",
+      "description": "GitLab Personal Access Token（内网 GitLab http://172.16.43.132，scope 至少 read_api）",
+      "password": true
+    }
+  ]
+}

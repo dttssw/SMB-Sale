@@ -29,7 +29,7 @@ deploy:
     - smb-sale
   script:
     - mkdir -p /opt/smb-sale
-    - rsync -a --delete --exclude 'server/data' ./ /opt/smb-sale/
+    - rsync -a --delete --exclude 'server/data' --exclude 'server/uploads' ./ /opt/smb-sale/
     - systemctl restart smb-sale
     - sleep 3
     - systemctl status smb-sale --no-pager -l || true

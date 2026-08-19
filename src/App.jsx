@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
+import { api } from './api.js';
 import { daysUntil, formatCnDate, monthOf, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
 import Header from './components/Header.jsx';
@@ -7,6 +8,7 @@ import KpiCard from './components/KpiCard.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
+import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
 import { ContractForm, ProspectForm, DealForm } from './components/forms.jsx';
 
@@ -22,15 +24,17 @@ export default function App() {
   const contractsDb = useDbData('contracts');
   const prospectsDb = useDbData('prospects');
   const dealsDb = useDbData('deals');
+  const materialsDb = useDbData('materials');
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
 
-  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading;
-  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error;
+  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading || materialsDb.loading;
+  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error || materialsDb.error;
 
   const contracts = contractsDb.data;
   const prospects = prospectsDb.data;
   const deals = dealsDb.data;
+  const materials = materialsDb.data;
 
   const stats = useMemo(() => {
     const overdue = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
@@ -105,11 +109,30 @@ export default function App() {
     }
   };
 
+  const uploadMaterials = async (files, note) => {
+    for (const file of files) {
+      await api.uploadMaterial(file, note);
+    }
+    await materialsDb.reload();
+    setActionError('');
+  };
+
+  const removeMaterial = async (id) => {
+    if (!window.confirm('确认删除该材料？删除后不可恢复。')) return;
+    try {
+      await materialsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   const retry = () => {
     setActionError('');
     contractsDb.reload();
     prospectsDb.reload();
     dealsDb.reload();
+    materialsDb.reload();
   };
 
   const waitingContractCount = prospects.filter((p) => p.stage === 'contract').length;
@@ -206,6 +229,8 @@ export default function App() {
 
       <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
 
+      <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />
+
       {modal && (
         <Modal title={modalTitle(modal)} onClose={() => setModal(null)}>
           {modal.kind === 'contract' && (
@@ -231,7 +256,7 @@ export default function App() {
       )}
 
       <footer className="footer">
-        SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），由 Node API 读写，增删改实时生效
+        SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），上传材料保存在 server/uploads，由 Node API 读写，增删改实时生效
       </footer>
     </div>
   );
