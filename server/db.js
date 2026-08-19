@@ -7,6 +7,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'smb.db');
 
+/**
+ * multer/busboy 解析 multipart 时，文件原始文件名默认按 latin1 解码，
+ * 中文等非 ASCII 文件名会变成乱码（如「产品报价.pdf」→「äº§åä¼°ä»·.pdf」）。
+ * 这里按 latin1 → UTF-8 重新解码还原；若重解码出现替换符，说明原名本身就是合法 UTF-8，则原样保留。
+ */
+export function toUtf8(name) {
+  if (!name) return name;
+  const decoded = Buffer.from(String(name), 'latin1').toString('utf8');
+  return decoded.includes('\uFFFD') ? String(name) : decoded;
+}
+
 // 自动创建数据目录（数据库文件首次启动时生成，不预置任何演示数据）
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -67,4 +78,19 @@ for (const table of ['contracts', 'prospects']) {
     db.exec(`ALTER TABLE ${table} DROP COLUMN owner`);
     console.log(`✅ 已从 ${table} 表移除遗留字段 owner`);
   }
+}
+
+// 迁移：修复材料库历史乱码文件名 / 备注（旧版本 multipart 文件名按 latin1 解码导致）
+const materials = db.prepare(`SELECT id, name, note FROM materials`).all();
+let repaired = 0;
+for (const row of materials) {
+  const name = toUtf8(row.name);
+  const note = toUtf8(row.note || '');
+  if (name !== row.name || note !== (row.note || '')) {
+    db.prepare(`UPDATE materials SET name = ?, note = ? WHERE id = ?`).run(name, note, row.id);
+    repaired++;
+  }
+}
+if (repaired > 0) {
+  console.log(`✅ 已修复 ${repaired} 条材料库乱码文件名/备注`);
 }

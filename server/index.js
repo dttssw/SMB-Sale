@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
-import { db } from './db.js';
+import { db, toUtf8 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -126,14 +126,15 @@ app.post('/api/materials', upload.single('file'), (req, res, next) => {
       err.status = 400;
       throw err;
     }
-    const ext = path.extname(req.file.originalname).toLowerCase();
+    const originalName = toUtf8(req.file.originalname);
+    const ext = path.extname(originalName).toLowerCase();
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const note = String(req.body.note || '').trim();
+    const note = toUtf8(String(req.body.note || '')).trim();
     db.prepare(
       `INSERT INTO materials (id, name, storedName, mime, size, ext, note) VALUES (@id, @name, @storedName, @mime, @size, @ext, @note)`
     ).run({
       id,
-      name: req.file.originalname,
+      name: originalName,
       storedName: req.file.filename,
       mime: req.file.mimetype,
       size: req.file.size,
