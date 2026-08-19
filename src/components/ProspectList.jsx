@@ -3,7 +3,7 @@ import { stageOf } from '../data/constants.js';
 import { daysUntil, formatDate, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 
-export default function ProspectList({ prospects, onAdd, onEdit, onDelete }) {
+export default function ProspectList({ prospects, onAdd, onEdit, onConvert, onDelete }) {
   const today = todayStr();
   const sorted = [...prospects].sort((a, b) =>
     (a.nextFollowUp || '9999-12-31').localeCompare(b.nextFollowUp || '9999-12-31')
@@ -61,6 +61,9 @@ export default function ProspectList({ prospects, onAdd, onEdit, onDelete }) {
                   <td className="ops">
                     <button className="link-btn" onClick={() => onEdit(p)}>
                       编辑
+                    </button>
+                    <button className="link-btn" onClick={() => onConvert(p)} title="一键转为在约客户">
+                      转为在约
                     </button>
                     <button className="link-btn danger" onClick={() => onDelete(p.id)}>
                       删除

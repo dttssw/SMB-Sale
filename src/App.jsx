@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
-import { daysUntil, formatCnDate, monthOf, todayStr } from './utils/date.js';
+import { daysUntil, formatCnDate, monthOf, oneYearFrom, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
+import { PLANS } from './data/constants.js';
 import Header from './components/Header.jsx';
 import KpiCard from './components/KpiCard.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
@@ -16,6 +17,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 
 const modalTitle = (m) => {
   if (m.kind === 'contract') return m.data ? '编辑在约客户' : '新增在约客户';
+  if (m.kind === 'convert') return '跟进客户转为在约客户';
   if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
   return '记录成交金额';
 };
@@ -89,6 +91,18 @@ export default function App() {
     }
   };
 
+  // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
+  const convertToContract = async (prospect, data) => {
+    try {
+      await contractsDb.create({ ...data, id: uid() });
+      await prospectsDb.remove(prospect.id);
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   const removeContract = async (id) => {
     if (!window.confirm('确认删除该在约客户？')) return;
     try {
@@ -108,6 +122,22 @@ export default function App() {
       setActionError(err.message);
     }
   };
+
+  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人、备注；订阅默认一年）
+  const convertProspect = (p) =>
+    setModal({
+      kind: 'convert',
+      data: p,
+      initial: {
+        name: p.name,
+        contact: p.contact || '',
+        plan: PLANS[1],
+        contractAmount: p.expectedAmount || '',
+        startDate: todayStr(),
+        expiryDate: oneYearFrom(todayStr()),
+        note: p.note || '',
+      },
+    });
 
   const uploadMaterials = async (files, note) => {
     for (const file of files) {
@@ -224,6 +254,7 @@ export default function App() {
         prospects={prospects}
         onAdd={() => setModal({ kind: 'prospect' })}
         onEdit={(p) => setModal({ kind: 'prospect', data: p })}
+        onConvert={convertProspect}
         onDelete={removeProspect}
       />
 
@@ -238,6 +269,14 @@ export default function App() {
               key={modal.data?.id || 'new'}
               initial={modal.data}
               onSave={saveContract}
+              onCancel={() => setModal(null)}
+            />
+          )}
+          {modal.kind === 'convert' && (
+            <ContractForm
+              key={`convert-${modal.data.id}`}
+              initial={modal.initial}
+              onSave={(data) => convertToContract(modal.data, data)}
               onCancel={() => setModal(null)}
             />
           )}
