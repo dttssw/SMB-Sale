@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { oneYearFrom, todayStr } from '../utils/date.js';
+import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
 import { PLANS, STAGES } from '../data/constants.js';
 
 function Field({ label, required, children, full }) {
@@ -41,10 +41,16 @@ export function ContractForm({ initial, onSave, onCancel }) {
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
 
-  // 订阅默认一年：选定订阅开始时间后，到期时间自动设为一年后（前一天），到期时间仍可手动修改
+  // 订阅默认一年：选定开始时间后，到期时间自动设为一年后（前一天）
   const onStartDateChange = (e) => {
     const v = e.target.value;
     setForm((f) => ({ ...f, startDate: v, expiryDate: v ? oneYearFrom(v) : f.expiryDate }));
+  };
+
+  // 订阅默认一年（反向联动）：选定到期时间后，开始时间自动设为一年前（加一天）
+  const onExpiryDateChange = (e) => {
+    const v = e.target.value;
+    setForm((f) => ({ ...f, expiryDate: v, startDate: v ? oneYearBefore(v) : f.startDate }));
   };
 
   const submit = (e) => {
@@ -79,7 +85,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
         <input type="date" value={form.startDate} onChange={onStartDateChange} />
       </Field>
       <Field label="订阅到期时间" required full>
-        <input type="date" value={form.expiryDate} onChange={set('expiryDate')} />
+        <input type="date" value={form.expiryDate} onChange={onExpiryDateChange} />
       </Field>
       <Field label="备注" full>
         <textarea value={form.note} onChange={set('note')} placeholder="合同约定、续约折扣等信息" />

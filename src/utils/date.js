@@ -49,3 +49,17 @@ export function oneYearFrom(dateStr) {
   const day = String(next.getDate()).padStart(2, '0');
   return `${next.getFullYear()}-${m}-${day}`;
 }
+
+/**
+ * 订阅默认一年（反向联动）：返回「到期时间 − 1 年 + 1 天」的开始时间，
+ * 与 oneYearFrom 互为逆运算，天数逻辑完全一致。
+ * 例如到期时间 2027-08-25 → 开始时间 2026-08-26。
+ */
+export function oneYearBefore(dateStr) {
+  if (!dateStr) return '';
+  const d = parseDate(dateStr);
+  const prev = new Date(d.getFullYear() - 1, d.getMonth(), d.getDate() + 1);
+  const m = String(prev.getMonth() + 1).padStart(2, '0');
+  const day = String(prev.getDate()).padStart(2, '0');
+  return `${prev.getFullYear()}-${m}-${day}`;
+}
