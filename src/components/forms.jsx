@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
 import { PLANS, STAGES } from '../data/constants.js';
+import DatePicker from './DatePicker.jsx';
 
 function Field({ label, required, children, full }) {
   return (
@@ -42,14 +43,12 @@ export function ContractForm({ initial, onSave, onCancel }) {
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
 
   // 订阅默认一年：选定开始时间后，到期时间自动设为一年后（前一天）
-  const onStartDateChange = (e) => {
-    const v = e.target.value;
+  const onStartDateChange = (v) => {
     setForm((f) => ({ ...f, startDate: v, expiryDate: v ? oneYearFrom(v) : f.expiryDate }));
   };
 
   // 订阅默认一年（反向联动）：选定到期时间后，开始时间自动设为一年前（加一天）
-  const onExpiryDateChange = (e) => {
-    const v = e.target.value;
+  const onExpiryDateChange = (v) => {
     setForm((f) => ({ ...f, expiryDate: v, startDate: v ? oneYearBefore(v) : f.startDate }));
   };
 
@@ -82,10 +81,10 @@ export function ContractForm({ initial, onSave, onCancel }) {
         <input type="number" min="0" step="any" value={form.contractAmount} onChange={set('contractAmount')} />
       </Field>
       <Field label="订阅开始时间" required>
-        <input type="date" value={form.startDate} onChange={onStartDateChange} />
+        <DatePicker value={form.startDate} onChange={onStartDateChange} clearable={false} />
       </Field>
       <Field label="订阅到期时间" required full>
-        <input type="date" value={form.expiryDate} onChange={onExpiryDateChange} />
+        <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
       </Field>
       <Field label="备注" full>
         <textarea value={form.note} onChange={set('note')} placeholder="合同约定、续约折扣等信息" />
@@ -138,10 +137,10 @@ export function ProspectForm({ initial, onSave, onCancel }) {
         <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
       </Field>
       <Field label="上次跟进日期">
-        <input type="date" value={form.lastFollowUp} onChange={set('lastFollowUp')} />
+        <DatePicker value={form.lastFollowUp} onChange={(v) => setForm((f) => ({ ...f, lastFollowUp: v }))} />
       </Field>
       <Field label="下次跟进日期" full>
-        <input type="date" value={form.nextFollowUp} onChange={set('nextFollowUp')} />
+        <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
       <Field label="跟进备注" full>
         <textarea value={form.note} onChange={set('note')} placeholder="客户诉求、异议点、下一步动作" />
@@ -179,7 +178,7 @@ export function DealForm({ onSave, onCancel }) {
         <input type="number" min="0" step="any" value={form.amount} onChange={set('amount')} />
       </Field>
       <Field label="签约日期" required full>
-        <input type="date" value={form.date} onChange={set('date')} />
+        <DatePicker value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} clearable={false} />
       </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
