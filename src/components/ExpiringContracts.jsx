@@ -11,7 +11,7 @@ function statusOf(expiryDate) {
   return { label: '正常在约', tone: 'ok' };
 }
 
-export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }) {
+export default function ExpiringContracts({ contracts, onAdd, onEdit, onRenew, onDelete }) {
   const sorted = [...contracts].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
   const overdue = sorted.filter((c) => daysUntil(c.expiryDate) < 0).length;
   const exp30 = sorted.filter((c) => {
@@ -69,6 +69,9 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onDelete }
                     <Badge tone={st.tone}>{st.label}</Badge>
                   </td>
                   <td className="ops">
+                    <button className="link-btn ok" onClick={() => onRenew(c)} title="续约后订阅到期时间自动延长一年">
+                      续约
+                    </button>
                     <button className="link-btn" onClick={() => onEdit(c)}>
                       编辑
                     </button>

@@ -63,3 +63,18 @@ export function oneYearBefore(dateStr) {
   const day = String(prev.getDate()).padStart(2, '0');
   return `${prev.getFullYear()}-${m}-${day}`;
 }
+
+/**
+ * 续约：以当前到期时间为基准，订阅开始时间顺延为到期日次日，
+ * 订阅到期时间自动往后延长一年（与新开始时间保持「一年 − 一天」）。
+ * 例如到期时间 2027-08-13 → 新开始 2027-08-14，新到期 2028-08-13。
+ */
+export function renewFrom(expiryDate) {
+  if (!expiryDate) return { startDate: '', expiryDate: '' };
+  const d = parseDate(expiryDate);
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+  const m = String(start.getMonth() + 1).padStart(2, '0');
+  const day = String(start.getDate()).padStart(2, '0');
+  const startDate = `${start.getFullYear()}-${m}-${day}`;
+  return { startDate, expiryDate: oneYearFrom(startDate) };
+}

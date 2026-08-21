@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
-import { daysUntil, formatCnDate, monthOf, oneYearFrom, todayStr } from './utils/date.js';
+import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
 import { PLANS } from './data/constants.js';
 import Header from './components/Header.jsx';
@@ -107,6 +107,24 @@ export default function App() {
     if (!window.confirm('确认删除该在约客户？')) return;
     try {
       await contractsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  // 续约：订阅开始时间顺延为到期日次日，订阅到期时间自动往后延长一年
+  const renewContract = async (c) => {
+    const { startDate, expiryDate } = renewFrom(c.expiryDate);
+    if (
+      !window.confirm(
+        `确认续约「${c.name}」？\n订阅开始时间：${formatDate(c.startDate)} → ${formatDate(startDate)}\n订阅到期时间：${formatDate(c.expiryDate)} → ${formatDate(expiryDate)}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await contractsDb.update({ ...c, startDate, expiryDate });
       setActionError('');
     } catch (err) {
       setActionError(err.message);
@@ -247,6 +265,7 @@ export default function App() {
         contracts={contracts}
         onAdd={() => setModal({ kind: 'contract' })}
         onEdit={(c) => setModal({ kind: 'contract', data: c })}
+        onRenew={renewContract}
         onDelete={removeContract}
       />
 
