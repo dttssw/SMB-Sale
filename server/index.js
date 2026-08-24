@@ -55,7 +55,7 @@ const TABLES = ['contracts', 'prospects', 'deals'];
 
 const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
 };
 
@@ -99,6 +99,91 @@ function sanitize(table, body) {
 
 function findRow(table, id) {
   return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+}
+
+// ---- 日期 / 备注相关工具（后端本地时区；SQLite datetime('now') 存的是 UTC）----
+const pad2 = (n) => String(n).padStart(2, '0');
+function dateKey(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function todayDateKey() {
+  const now = new Date();
+  return { date: dateKey(now), time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` };
+}
+// 把 SQLite 返回的 UTC 时间字符串(YYYY-MM-DD HH:MM:SS) 转成本地 Date
+function localDateOfDb(createdAt) {
+  return new Date(String(createdAt).replace(' ', 'T') + 'Z');
+}
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const t = new Date(y, m - 1, d);
+  t.setDate(t.getDate() + days);
+  return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+}
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const target = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - today) / 86400000);
+}
+// 取某跟进客户最后一条备注的本地日期 → 上次跟进日期，下次跟进为 3 天后
+function lastFollowUpDates(prospectId) {
+  const last = db
+    .prepare(`SELECT createdAt FROM notes WHERE customerType = 'prospect' AND customerId = ? ORDER BY createdAt DESC LIMIT 1`)
+    .get(prospectId);
+  if (!last) return null;
+  const d = localDateOfDb(last.createdAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const lf = dateKey(d);
+  return { lastFollowUp: lf, nextFollowUp: addDays(lf, 3) };
+}
+// 跟上跟进客户的上次/下次跟进日期（以备注时间线为准）
+function reindexProspectFollowUps() {
+  const pros = db.prepare(`SELECT id FROM prospects`).all();
+  for (const p of pros) {
+    const dates = lastFollowUpDates(p.id);
+    if (dates) {
+      db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
+        dates.lastFollowUp,
+        dates.nextFollowUp,
+        p.id
+      );
+    }
+  }
+}
+// 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
+const RENEW_WINDOW_DAYS = 45;
+function syncRenewals() {
+  const contracts = db.prepare(`SELECT * FROM contracts`).all();
+  const active = new Set();
+  for (const c of contracts) {
+    const d = daysUntil(c.expiryDate);
+    if (d != null && d < RENEW_WINDOW_DAYS) {
+      active.add(c.id);
+      const existing = db.prepare(`SELECT * FROM prospects WHERE category = 'renew' AND contractId = ?`).get(c.id);
+      const data = { name: c.name, contact: c.contact || '', expectedAmount: c.contractAmount, expiryDate: c.expiryDate };
+      if (existing) {
+        db.prepare(
+          `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, expiryDate = @expiryDate WHERE id = @id`
+        ).run({ ...data, id: existing.id });
+      } else {
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+        db.prepare(
+          `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate) VALUES (?, ?, 'negotiation', ?, ?, '', NULL, 'renew', ?, ?)`
+        ).run(id, data.name, data.contact, data.expectedAmount, c.id, data.expiryDate);
+      }
+    }
+  }
+  // 自动退出：Renew 跟进及其关联在约客户不存在或不再少于45天到期时，删除并清理备注
+  const renews = db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all();
+  for (const r of renews) {
+    if (!r.contractId || !active.has(r.contractId)) {
+      db.prepare(`DELETE FROM notes WHERE customerType = 'prospect' AND customerId = ?`).run(r.id);
+      db.prepare(`DELETE FROM prospects WHERE id = ?`).run(r.id);
+    }
+  }
 }
 
 // 健康检查：GET /api/health（需放在泛型 :table 路由之前）
@@ -196,10 +281,10 @@ app.get('/api/notes', (req, res, next) => {
   }
 });
 
-// 新增：POST /api/notes
+// 新增：POST /api/notes（同一本地日期的备注合并到同一条，每次以 [HH:MM] 作为时间标记前缀）
 app.post('/api/notes', (req, res, next) => {
   try {
-    const { id, customerType, customerId, content } = req.body || {};
+    const { id, customerType, customerId, content, raw } = req.body || {};
     if (!id) {
       const e = new Error('缺少 id');
       e.status = 400;
@@ -220,9 +305,62 @@ app.post('/api/notes', (req, res, next) => {
       e.status = 400;
       throw e;
     }
-    const row = { id, customerType, customerId, content: String(content).trim() };
-    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (@id, @customerType, @customerId, @content)`).run(row);
-    res.status(201).json(db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id));
+    const text = String(content).trim();
+
+    // raw=true：备注迁移专用，原样写入（不合并、不加时间标记）
+    if (raw) {
+      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
+        id,
+        customerType,
+        customerId,
+        text
+      );
+      return res.status(201).json(db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id));
+    }
+
+    const { date, time } = todayDateKey();
+    const marker = `[${time}]`;
+
+    // 找该客户本地日期为今天的最新一条备注，若存在则合并到它（同一天多次备注累积）
+    const existing = db
+      .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
+      .all(customerType, customerId);
+    let todayNote = null;
+    for (const r of existing) {
+      const d = localDateOfDb(r.createdAt);
+      if (!Number.isNaN(d.getTime()) && dateKey(d) === date) {
+        todayNote = r;
+        break;
+      }
+    }
+
+    let saved;
+    if (todayNote) {
+      const merged = `${todayNote.content}\n${marker} ${text}`;
+      db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(merged, todayNote.id);
+      saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(todayNote.id);
+    } else {
+      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
+        id,
+        customerType,
+        customerId,
+        `${marker} ${text}`
+      );
+      saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id);
+    }
+
+    // 若为跟进客户：用最后一次添加备注的日期作为上次跟进，下次跟进自动设为3天后
+    if (customerType === 'prospect') {
+      const dates = lastFollowUpDates(customerId);
+      if (dates) {
+        db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
+          dates.lastFollowUp,
+          dates.nextFollowUp,
+          customerId
+        );
+      }
+    }
+    res.status(201).json(saved);
   } catch (err) {
     next(err);
   }
@@ -233,6 +371,17 @@ app.delete('/api/notes/:id', (req, res, next) => {
   try {
     const result = db.prepare(`DELETE FROM notes WHERE id = ?`).run(req.params.id);
     if (!result.changes) return res.status(404).json({ error: '备注不存在' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+app.post('/api/sync/renewals', (req, res, next) => {
+  try {
+    syncRenewals();
+    reindexProspectFollowUps();
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -298,6 +447,13 @@ app.delete('/api/:table/:id', (req, res, next) => {
       if (del.changes) {
         const type = table === 'contracts' ? 'contract' : table === 'prospects' ? 'prospect' : null;
         if (type) db.prepare(`DELETE FROM notes WHERE customerType = ? AND customerId = ?`).run(type, id);
+        // 删除在约客户时，级联清理其自动生成的 Renew 跟进及其备注
+        if (table === 'contracts') {
+          db.prepare(
+            `DELETE FROM notes WHERE customerType = 'prospect' AND customerId IN (SELECT id FROM prospects WHERE category = 'renew' AND contractId = ?)`
+          ).run(id);
+          db.prepare(`DELETE FROM prospects WHERE category = 'renew' AND contractId = ?`).run(id);
+        }
       }
       return del;
     })();

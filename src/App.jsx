@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
@@ -60,6 +60,22 @@ export default function App() {
     return { overdue, exp30, renewalTotal, newTotal, monthRenewal, monthNew, renewalPct };
   }, [contracts, deals]);
 
+  // ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+  const syncRef = useRef(false);
+  const runSync = async () => {
+    try {
+      await api.syncRenewals();
+      await prospectsDb.reload();
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+  useEffect(() => {
+    if (loading || dbError || syncRef.current) return;
+    syncRef.current = true;
+    runSync();
+  }, [loading, dbError]);
+
   const saveContract = async (data) => {
     try {
       const { note, ...record } = data;
@@ -71,6 +87,7 @@ export default function App() {
       }
       // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）
       if (note) await api.createNote({ id: uid(), customerType: 'contract', customerId: savedId, content: note });
+      await runSync();
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -84,7 +101,8 @@ export default function App() {
       let savedId = data.id;
       if (data.id) await prospectsDb.update(record);
       else {
-        const saved = await prospectsDb.create({ ...record, id: uid() });
+        // 新跟进客户默认归入 New（Renew 由到期<45天的在约客户自动生成）
+        const saved = await prospectsDb.create({ ...record, category: 'new', id: uid() });
         savedId = saved.id;
       }
       // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）
@@ -111,14 +129,15 @@ export default function App() {
     try {
       const { note, ...record } = data;
       const saved = await contractsDb.create({ ...record, id: uid() });
-      // 把跟进客户的备注时间线迁移到新在约客户
+      // 把跟进客户的备注时间线迁移到新在约客户（raw=true 原样迁移，避免叠加时间标记或触发当日合并）
       const prospNotes = await api.listNotes('prospect', prospect.id);
       for (const n of prospNotes) {
-        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content });
+        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content, raw: true });
       }
       // 转在约表单里填写的备注
       if (note) await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: note });
       await prospectsDb.remove(prospect.id);
+      await runSync();
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -130,6 +149,7 @@ export default function App() {
     if (!window.confirm('确认删除该在约客户？')) return;
     try {
       await contractsDb.remove(id);
+      await runSync();
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -149,6 +169,7 @@ export default function App() {
     }
     try {
       await contractsDb.update({ ...c, startDate, expiryDate });
+      await runSync();
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -213,6 +234,8 @@ export default function App() {
   };
 
   const waitingContractCount = prospects.filter((p) => p.stage === 'contract').length;
+  const newProspectCount = prospects.filter((p) => p.category !== 'renew').length;
+  const renewProspectCount = prospects.filter((p) => p.category === 'renew').length;
 
   if (loading) {
     return (
@@ -265,12 +288,12 @@ export default function App() {
           sub="建议尽快安排续约触达"
         />
         <KpiCard
-          label="跟进中的新客户"
+          label="跟进中客户"
           value={prospects.length}
           unit="家"
           icon="🚀"
           tone="violet"
-          sub={`待签约 ${waitingContractCount} 家`}
+          sub={`新客 ${newProspectCount} 家 · 续约 ${renewProspectCount} 家`}
         />
         <KpiCard
           label="本月续约金额"

@@ -56,7 +56,10 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
     if (!content) return;
     try {
       const saved = await api.createNote({ id: uid(), customerType, customerId: customer.id, content });
-      setNotes((prev) => [saved, ...prev]);
+      // 同一天备注会合并到已有那条（后端返回合并后的同一条），据此做替换而非追加，避免重复
+      setNotes((prev) =>
+        prev.some((n) => n.id === saved.id) ? [saved, ...prev.filter((n) => n.id !== saved.id)] : [saved, ...prev]
+      );
       setText('');
       setNoteError('');
     } catch (err) {
@@ -125,7 +128,10 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
             <DetailItem label="联系人" value={customer.contact || '—'} />
             <DetailItem label="预计金额" value={`${formatMoney(customer.expectedAmount)} 元`} />
             <DetailItem label="上次跟进" value={customer.lastFollowUp ? formatDate(customer.lastFollowUp) : '—'} />
-            <DetailItem label="下次跟进" value={customer.nextFollowUp ? formatDate(customer.nextFollowUp) : '—'} full />
+            <DetailItem label="下次跟进" value={customer.nextFollowUp ? formatDate(customer.nextFollowUp) : '—'} />
+            {customer.category === 'renew' && (
+              <DetailItem label="续约到期时间" value={customer.expiryDate ? formatDate(customer.expiryDate) : '—'} full />
+            )}
           </>
         )}
       </div>

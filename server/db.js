@@ -47,6 +47,9 @@ db.exec(`
     expectedAmount REAL NOT NULL,
     lastFollowUp   TEXT,
     nextFollowUp   TEXT,
+    category       TEXT DEFAULT 'new',   -- 'new' | 'renew'
+    contractId     TEXT DEFAULT '',      -- renew 跟进所关联的在约客户 id
+    expiryDate     TEXT,                 -- renew 跟进对应的在约到期时间（冗余，便于展示）
     note           TEXT DEFAULT '',
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -126,3 +129,9 @@ const migrateNotes = (customerType, table) => {
 };
 migrateNotes('contract', 'contracts');
 migrateNotes('prospect', 'prospects');
+
+// 迁移：跟进客户增加 New/Renew 分类与续约关联字段（现有客户默认均为 New，幂等）
+const prospectCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
+if (!prospectCols.includes('category')) db.exec(`ALTER TABLE prospects ADD COLUMN category TEXT DEFAULT 'new'`);
+if (!prospectCols.includes('contractId')) db.exec(`ALTER TABLE prospects ADD COLUMN contractId TEXT DEFAULT ''`);
+if (!prospectCols.includes('expiryDate')) db.exec(`ALTER TABLE prospects ADD COLUMN expiryDate TEXT`);
