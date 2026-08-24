@@ -37,6 +37,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
     expiryDate: initial?.expiryDate || oneYearFrom(todayStr()),
+    note: initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -85,6 +86,13 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="订阅到期时间" required full>
         <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
       </Field>
+      <Field label="备注" full>
+        <textarea
+          value={form.note}
+          onChange={set('note')}
+          placeholder="客户情况、沟通记录等（保存后追加为该客户的备注时间线）"
+        />
+      </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
     </form>
@@ -100,6 +108,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
+    note: initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -136,6 +145,13 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       </Field>
       <Field label="下次跟进日期" full>
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
+      </Field>
+      <Field label="备注" full>
+        <textarea
+          value={form.note}
+          onChange={set('note')}
+          placeholder="客户情况、商机来源、客户诉求等（保存后追加为该客户的备注时间线）"
+        />
       </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />

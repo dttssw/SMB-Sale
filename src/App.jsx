@@ -62,8 +62,15 @@ export default function App() {
 
   const saveContract = async (data) => {
     try {
-      if (data.id) await contractsDb.update(data);
-      else await contractsDb.create({ ...data, id: uid() });
+      const { note, ...record } = data;
+      let savedId = data.id;
+      if (data.id) await contractsDb.update(record);
+      else {
+        const saved = await contractsDb.create({ ...record, id: uid() });
+        savedId = saved.id;
+      }
+      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）
+      if (note) await api.createNote({ id: uid(), customerType: 'contract', customerId: savedId, content: note });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -73,8 +80,15 @@ export default function App() {
 
   const saveProspect = async (data) => {
     try {
-      if (data.id) await prospectsDb.update(data);
-      else await prospectsDb.create({ ...data, id: uid() });
+      const { note, ...record } = data;
+      let savedId = data.id;
+      if (data.id) await prospectsDb.update(record);
+      else {
+        const saved = await prospectsDb.create({ ...record, id: uid() });
+        savedId = saved.id;
+      }
+      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）
+      if (note) await api.createNote({ id: uid(), customerType: 'prospect', customerId: savedId, content: note });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -95,12 +109,15 @@ export default function App() {
   // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
   const convertToContract = async (prospect, data) => {
     try {
-      const saved = await contractsDb.create({ ...data, id: uid() });
+      const { note, ...record } = data;
+      const saved = await contractsDb.create({ ...record, id: uid() });
       // 把跟进客户的备注时间线迁移到新在约客户
       const prospNotes = await api.listNotes('prospect', prospect.id);
       for (const n of prospNotes) {
         await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content });
       }
+      // 转在约表单里填写的备注
+      if (note) await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: note });
       await prospectsDb.remove(prospect.id);
       setActionError('');
       setModal(null);
