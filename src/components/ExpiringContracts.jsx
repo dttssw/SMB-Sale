@@ -11,7 +11,7 @@ function statusOf(expiryDate) {
   return { label: '正常在约', tone: 'ok' };
 }
 
-export default function ExpiringContracts({ contracts, onAdd, onEdit, onRenew, onDelete }) {
+export default function ExpiringContracts({ contracts, onAdd, onView }) {
   const sorted = [...contracts].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
   const overdue = sorted.filter((c) => daysUntil(c.expiryDate) < 0).length;
   const exp30 = sorted.filter((c) => {
@@ -44,7 +44,7 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onRenew, o
           <thead>
             <tr>
               <th>客户名称</th>
-              <th>套餐</th>
+              <th>产品</th>
               <th className="num">合同金额</th>
               <th className="num">到期时间</th>
               <th>状态</th>
@@ -57,7 +57,9 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onRenew, o
               return (
                 <tr key={c.id}>
                   <td>
-                    <div className="cell-main">{c.name}</div>
+                    <a className="link-name" onClick={() => onView(c)} title="查看客户详情">
+                      {c.name}
+                    </a>
                     <div className="cell-sub">{c.contact || '—'}</div>
                   </td>
                   <td>
@@ -69,14 +71,8 @@ export default function ExpiringContracts({ contracts, onAdd, onEdit, onRenew, o
                     <Badge tone={st.tone}>{st.label}</Badge>
                   </td>
                   <td className="ops">
-                    <button className="link-btn ok" onClick={() => onRenew(c)} title="续约后订阅到期时间自动延长一年">
-                      续约
-                    </button>
-                    <button className="link-btn" onClick={() => onEdit(c)}>
-                      编辑
-                    </button>
-                    <button className="link-btn danger" onClick={() => onDelete(c.id)}>
-                      删除
+                    <button className="link-btn" onClick={() => onView(c)}>
+                      详情
                     </button>
                   </td>
                 </tr>

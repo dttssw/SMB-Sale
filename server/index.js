@@ -176,6 +176,69 @@ app.delete('/api/materials/:id', (req, res, next) => {
   }
 });
 
+// ---- 客户备注（时间线）路由 ----
+const NOTE_TYPES = ['contract', 'prospect'];
+
+// 列表：GET /api/notes?customerType=&customerId=
+app.get('/api/notes', (req, res, next) => {
+  const { customerType, customerId } = req.query;
+  if (!NOTE_TYPES.includes(customerType)) {
+    return res.status(400).json({ error: 'customerType 必须为 contract 或 prospect' });
+  }
+  if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
+  try {
+    const rows = db
+      .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
+      .all(customerType, customerId);
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 新增：POST /api/notes
+app.post('/api/notes', (req, res, next) => {
+  try {
+    const { id, customerType, customerId, content } = req.body || {};
+    if (!id) {
+      const e = new Error('缺少 id');
+      e.status = 400;
+      throw e;
+    }
+    if (!NOTE_TYPES.includes(customerType)) {
+      const e = new Error('customerType 必须为 contract 或 prospect');
+      e.status = 400;
+      throw e;
+    }
+    if (!customerId) {
+      const e = new Error('缺少 customerId');
+      e.status = 400;
+      throw e;
+    }
+    if (!content || !String(content).trim()) {
+      const e = new Error('备注内容不能为空');
+      e.status = 400;
+      throw e;
+    }
+    const row = { id, customerType, customerId, content: String(content).trim() };
+    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (@id, @customerType, @customerId, @content)`).run(row);
+    res.status(201).json(db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 删除：DELETE /api/notes/:id
+app.delete('/api/notes/:id', (req, res, next) => {
+  try {
+    const result = db.prepare(`DELETE FROM notes WHERE id = ?`).run(req.params.id);
+    if (!result.changes) return res.status(404).json({ error: '备注不存在' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- REST API ----
 
 // 列表：GET /api/:table
@@ -230,7 +293,14 @@ app.delete('/api/:table/:id', (req, res, next) => {
   const id = req.params.id;
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
-    const result = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+    const result = db.transaction(() => {
+      const del = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
+      if (del.changes) {
+        const type = table === 'contracts' ? 'contract' : table === 'prospects' ? 'prospect' : null;
+        if (type) db.prepare(`DELETE FROM notes WHERE customerType = ? AND customerId = ?`).run(type, id);
+      }
+      return del;
+    })();
     if (!result.changes) return res.status(404).json({ error: '记录不存在' });
     res.json({ ok: true });
   } catch (err) {

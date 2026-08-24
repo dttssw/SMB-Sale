@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
-import { PLANS, STAGES } from '../data/constants.js';
+import { PRODUCTS, STAGES } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 
 function Field({ label, required, children, full }) {
@@ -32,12 +32,11 @@ export function ContractForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
-    plan: initial?.plan || PLANS[1],
+    plan: initial?.plan || PRODUCTS[0],
     contact: initial?.contact || '',
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
     expiryDate: initial?.expiryDate || oneYearFrom(todayStr()),
-    note: initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -65,9 +64,9 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="客户名称" required full>
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
       </Field>
-      <Field label="套餐" required>
+      <Field label="产品" required>
         <select value={form.plan} onChange={set('plan')}>
-          {PLANS.map((p) => (
+          {PRODUCTS.map((p) => (
             <option key={p} value={p}>
               {p}
             </option>
@@ -86,9 +85,6 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="订阅到期时间" required full>
         <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
       </Field>
-      <Field label="备注" full>
-        <textarea value={form.note} onChange={set('note')} placeholder="合同约定、续约折扣等信息" />
-      </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
     </form>
@@ -104,7 +100,6 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
-    note: initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -141,9 +136,6 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       </Field>
       <Field label="下次跟进日期" full>
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
-      </Field>
-      <Field label="跟进备注" full>
-        <textarea value={form.note} onChange={set('note')} placeholder="客户诉求、异议点、下一步动作" />
       </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />

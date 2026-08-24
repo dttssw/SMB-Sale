@@ -37,11 +37,14 @@ npm start       # 生产模式运行于端口 3001
 ## 功能说明
 
 - 所有数据存储在 SQLite 数据库中，可新增 / 编辑 / 删除在约客户、跟进客户与成交记录，改动实时生效。
-- 跟进中的新客户可一键**转为在约客户**：点击操作栏「转为在约」，表单自动带入客户名称、联系人、预计金额与备注（订阅默认一年），保存后该客户移入在约列表并从跟进列表中移除。
+- 跟进中的新客户可一键**转为在约客户**：在客户详情弹窗的「⋯ 更多」菜单点击「转为在约」，表单自动带入客户名称、联系人、预计金额（订阅默认一年），保存后该客户移入在约列表并从跟进列表中移除（跟进客户的备注时间线会一并迁移）。
+- **客户详情弹窗**：点击列表中的客户名称或「详情」按钮即可查看客户全部信息，编辑 / 删除 / 续约 / 转为在约等操作收进弹窗右上角的「⋯ 更多」二级菜单，无需每次点编辑才能看到。
+- **备注时间线**：每个客户可维护多条备注，在详情弹窗内填写并「提交备注」，系统按当前时间归档并按时间倒序罗列，支持逐条删除；旧版单条备注已自动迁移到时间线。
+- 客户**套餐升级为产品**，可选产品：专业版、旗舰版、BE版、PE版、SaaS专业版、SaaS旗舰版、Duo、Duo Credit（数据库字段仍为 `plan`，界面统一展示为「产品」）。
 - 在约客户订阅默认一年：选定**订阅开始时间**后，到期时间自动设为一年后（前一天）；反向，选定**订阅到期时间**后，开始时间自动设为一年前（加一天），双向自动联动。
 - 日期选择器支持**年 / 月 / 日下拉直接选年份**，无需在日历中逐月翻到其他年份；更改年月时自动收敛非法日期（如 1月31日 改到 2月 → 自动变为月末），可选日期可一键清空。
 - 材料库文件存储在 `server/uploads/`（已 gitignore），文件元数据存于 SQLite，可批量上传、预览、下载与删除；可执行/脚本类型（exe、bat、sh、js 等）禁止上传，html/svg 等含脚本风险的类型以附件方式下载而非内联渲染。
-- 业务常量（套餐、跟进阶段）见 `src/data/constants.js`。
+- 业务常量（产品、跟进阶段）见 `src/data/constants.js`。
 
 ## API 一览
 
@@ -50,7 +53,10 @@ npm start       # 生产模式运行于端口 3001
 | GET | `/api/contracts` / `/api/prospects` / `/api/deals` | 列表 |
 | POST | `/api/contracts` / `/api/prospects` / `/api/deals` | 新增 |
 | PUT | `/api/contracts/:id` / `/api/prospects/:id` / `/api/deals/:id` | 更新 |
-| DELETE | `/api/contracts/:id` / `/api/prospects/:id` / `/api/deals/:id` | 删除 |
+| DELETE | `/api/contracts/:id` / `/api/prospects/:id` / `/api/deals/:id` | 删除（删除客户时同时级联删除其备注） |
+| GET | `/api/notes?customerType=&customerId=` | 客户备注时间线列表 |
+| POST | `/api/notes` | 新增备注（字段 `id` `customerType` `customerId` `content`） |
+| DELETE | `/api/notes/:id` | 删除单条备注 |
 | GET | `/api/materials` | 材料库列表 |
 | POST | `/api/materials` | 上传材料（multipart，字段 `file` + 可选 `note`，单个 ≤ 100MB） |
 | GET | `/api/materials/:id/download` | 以原始文件名下载材料 |
@@ -78,9 +84,10 @@ npm start       # 生产模式运行于端口 3001
     │   ├── RevenuePanel.jsx # 金额看板（图表 + 成交明细）
     │   ├── MaterialLibrary.jsx # 材料库（上传/预览/下载/删除）
     │   ├── forms.jsx        # 新增/编辑表单
+    │   ├── CustomerDetail.jsx # 客户详情（二级菜单 + 备注时间线）
     │   ├── Modal.jsx / Badge.jsx
     ├── data/
-    │   └── constants.js     # 套餐 / 跟进阶段
+    │   └── constants.js     # 产品 / 跟进阶段
     ├── hooks/useDbData.js   # 数据库 CRUD Hook（替代原 localStorage）
     └── utils/               # 日期 / 金额工具
 ```

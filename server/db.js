@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +70,16 @@ db.exec(`
     note       TEXT DEFAULT '',    -- 备注
     createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS notes (
+    id           TEXT PRIMARY KEY,
+    customerType TEXT NOT NULL,      -- 'contract' | 'prospect'
+    customerId   TEXT NOT NULL,      -- 关联客户 id
+    content      TEXT NOT NULL,      -- 备注内容
+    createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notes_customer ON notes(customerType, customerId);
 `);
 
 // 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）
@@ -94,3 +105,24 @@ for (const row of materials) {
 if (repaired > 0) {
   console.log(`✅ 已修复 ${repaired} 条材料库乱码文件名/备注`);
 }
+
+// 迁移：把旧版「单条备注」迁移到 notes 备注时间线表（按客户去重，幂等）
+const migrateNotes = (customerType, table) => {
+  const rows = db.prepare(`SELECT id, note FROM ${table} WHERE note IS NOT NULL AND note != ''`).all();
+  let moved = 0;
+  for (const r of rows) {
+    const exists = db.prepare(`SELECT 1 FROM notes WHERE customerType = ? AND customerId = ?`).get(customerType, r.id);
+    if (!exists) {
+      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
+        crypto.randomUUID(),
+        customerType,
+        r.id,
+        r.note
+      );
+      moved++;
+    }
+  }
+  if (moved > 0) console.log(`✅ 已将 ${moved} 条 ${table} 备注迁移到备注时间线`);
+};
+migrateNotes('contract', 'contracts');
+migrateNotes('prospect', 'prospects');

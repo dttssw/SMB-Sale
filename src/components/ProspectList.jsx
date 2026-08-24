@@ -3,7 +3,7 @@ import { stageOf } from '../data/constants.js';
 import { daysUntil, formatDate, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 
-export default function ProspectList({ prospects, onAdd, onEdit, onConvert, onDelete }) {
+export default function ProspectList({ prospects, onAdd, onView }) {
   const today = todayStr();
   const sorted = [...prospects].sort((a, b) =>
     (a.nextFollowUp || '9999-12-31').localeCompare(b.nextFollowUp || '9999-12-31')
@@ -45,7 +45,9 @@ export default function ProspectList({ prospects, onAdd, onEdit, onConvert, onDe
               return (
                 <tr key={p.id}>
                   <td>
-                    <div className="cell-main">{p.name}</div>
+                    <a className="link-name" onClick={() => onView(p)} title="查看客户详情">
+                      {p.name}
+                    </a>
                     <div className="cell-sub">{p.contact || '—'}</div>
                   </td>
                   <td>
@@ -59,14 +61,8 @@ export default function ProspectList({ prospects, onAdd, onEdit, onConvert, onDe
                     {next === 0 && <div className="cell-sub warn-text">今天跟进</div>}
                   </td>
                   <td className="ops">
-                    <button className="link-btn" onClick={() => onEdit(p)}>
-                      编辑
-                    </button>
-                    <button className="link-btn" onClick={() => onConvert(p)} title="一键转为在约客户">
-                      转为在约
-                    </button>
-                    <button className="link-btn danger" onClick={() => onDelete(p.id)}>
-                      删除
+                    <button className="link-btn" onClick={() => onView(p)}>
+                      详情
                     </button>
                   </td>
                 </tr>

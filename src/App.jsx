@@ -3,7 +3,7 @@ import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { formatMoney, sumBy } from './utils/format.js';
-import { PLANS } from './data/constants.js';
+import { PRODUCTS } from './data/constants.js';
 import Header from './components/Header.jsx';
 import KpiCard from './components/KpiCard.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
@@ -12,6 +12,7 @@ import RevenuePanel from './components/RevenuePanel.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
 import { ContractForm, ProspectForm, DealForm } from './components/forms.jsx';
+import CustomerDetail from './components/CustomerDetail.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
@@ -94,7 +95,12 @@ export default function App() {
   // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
   const convertToContract = async (prospect, data) => {
     try {
-      await contractsDb.create({ ...data, id: uid() });
+      const saved = await contractsDb.create({ ...data, id: uid() });
+      // 把跟进客户的备注时间线迁移到新在约客户
+      const prospNotes = await api.listNotes('prospect', prospect.id);
+      for (const n of prospNotes) {
+        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content });
+      }
       await prospectsDb.remove(prospect.id);
       setActionError('');
       setModal(null);
@@ -108,6 +114,7 @@ export default function App() {
     try {
       await contractsDb.remove(id);
       setActionError('');
+      setModal(null);
     } catch (err) {
       setActionError(err.message);
     }
@@ -126,6 +133,7 @@ export default function App() {
     try {
       await contractsDb.update({ ...c, startDate, expiryDate });
       setActionError('');
+      setModal(null);
     } catch (err) {
       setActionError(err.message);
     }
@@ -136,12 +144,13 @@ export default function App() {
     try {
       await prospectsDb.remove(id);
       setActionError('');
+      setModal(null);
     } catch (err) {
       setActionError(err.message);
     }
   };
 
-  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人、备注；订阅默认一年）
+  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人；订阅默认一年）
   const convertProspect = (p) =>
     setModal({
       kind: 'convert',
@@ -149,13 +158,16 @@ export default function App() {
       initial: {
         name: p.name,
         contact: p.contact || '',
-        plan: PLANS[1],
+        plan: PRODUCTS[0],
         contractAmount: p.expectedAmount || '',
         startDate: todayStr(),
         expiryDate: oneYearFrom(todayStr()),
-        note: p.note || '',
       },
     });
+
+  // 打开客户详情弹窗（点击客户名 / 详情按钮）
+  const openDetail = (customerType) => (customer) =>
+    setModal({ kind: 'detail', customerType, customer });
 
   const uploadMaterials = async (files, note) => {
     for (const file of files) {
@@ -264,17 +276,13 @@ export default function App() {
       <ExpiringContracts
         contracts={contracts}
         onAdd={() => setModal({ kind: 'contract' })}
-        onEdit={(c) => setModal({ kind: 'contract', data: c })}
-        onRenew={renewContract}
-        onDelete={removeContract}
+        onView={openDetail('contract')}
       />
 
       <ProspectList
         prospects={prospects}
         onAdd={() => setModal({ kind: 'prospect' })}
-        onEdit={(p) => setModal({ kind: 'prospect', data: p })}
-        onConvert={convertProspect}
-        onDelete={removeProspect}
+        onView={openDetail('prospect')}
       />
 
       <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
@@ -305,6 +313,20 @@ export default function App() {
               initial={modal.data}
               onSave={saveProspect}
               onCancel={() => setModal(null)}
+            />
+          )}
+          {modal.kind === 'detail' && (
+            <CustomerDetail
+              customerType={modal.customerType}
+              customer={modal.customer}
+              onEdit={() =>
+                setModal({ kind: modal.customerType === 'contract' ? 'contract' : 'prospect', data: modal.customer })
+              }
+              onRenew={() => renewContract(modal.customer)}
+              onConvert={() => convertProspect(modal.customer)}
+              onDelete={() =>
+                (modal.customerType === 'contract' ? removeContract(modal.customer.id) : removeProspect(modal.customer.id))
+              }
             />
           )}
           {modal.kind === 'deal' && (

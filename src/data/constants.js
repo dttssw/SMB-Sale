@@ -1,4 +1,4 @@
-export const PLANS = ['标准版', '专业版', '企业版', '旗舰版'];
+export const PRODUCTS = ['专业版', '旗舰版', 'BE版', 'PE版', 'SaaS专业版', 'SaaS旗舰版', 'Duo', 'Duo Credit'];
 
 export const STAGES = [
   { key: 'initial', label: '初次沟通', tone: 'info' },
@@ -12,6 +12,6 @@ export function stageOf(key) {
   return STAGES.find((s) => s.key === key) || STAGES[0];
 }
 
-export function planOf(key) {
-  return PLANS.includes(key) ? key : PLANS[1];
+export function productOf(key) {
+  return PRODUCTS.includes(key) ? key : PRODUCTS[0];
 }

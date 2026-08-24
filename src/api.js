@@ -55,4 +55,9 @@ export const api = {
   removeMaterial: (id) => request(`/materials/${id}`, { method: 'DELETE' }),
   downloadUrl: (id) => `${BASE}/materials/${id}/download`,
   fileUrl: (storedName) => `/uploads/${encodeURIComponent(storedName)}`,
+  // ---- 客户备注（时间线）----
+  listNotes: (customerType, customerId) =>
+    request(`/notes?customerType=${encodeURIComponent(customerType)}&customerId=${encodeURIComponent(customerId)}`),
+  createNote: (data) => request('/notes', { method: 'POST', body: JSON.stringify(data) }),
+  removeNote: (id) => request(`/notes/${id}`, { method: 'DELETE' }),
 };
