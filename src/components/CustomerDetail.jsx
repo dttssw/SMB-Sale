@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { formatDate, formatNoteTime } from '../utils/date.js';
+import { formatDate, formatNoteDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 import { stageOf } from '../data/constants.js';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-// 备注时间在 utils/date.js 的 formatNoteTime 里按本地时区换算（datetime('now') 存的是 UTC）
+// 上方仅显示备注的本地日期（datetime('now') 存的是 UTC，需按本地时区换算）；具体时间点写在每条记录内容前的 [HH:MM]
 function timeLabel(createdAt) {
-  return formatNoteTime(createdAt);
+  return formatNoteDate(createdAt);
 }
 
 function DetailItem({ label, value, full }) {
@@ -162,7 +162,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
             {notes.map((n) => (
               <div key={n.id} className="note-item">
                 <div className="note-meta">
-                  <span className="note-time">🕒 {timeLabel(n.createdAt)}</span>
+                  <span className="note-time">📅 {timeLabel(n.createdAt)}</span>
                   <button className="link-btn danger" onClick={() => removeNote(n.id)}>
                     删除
                   </button>

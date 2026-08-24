@@ -94,3 +94,12 @@ export function formatNoteTime(createdAt) {
   const min = String(d.getMinutes()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day} ${h}:${min}`;
 }
+
+/**
+ * 备注时间线「上方」显示的日期：仅取本地日期（YYYY-MM-DD）。
+ * 具体时间点（[HH:MM]）由后端写入新添记录内容的前面，上方不再重复显示时间。
+ */
+export function formatNoteDate(createdAt) {
+  if (!createdAt) return '';
+  return formatNoteTime(createdAt).slice(0, 10);
+}
