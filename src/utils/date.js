@@ -78,3 +78,19 @@ export function renewFrom(expiryDate) {
   const startDate = `${start.getFullYear()}-${m}-${day}`;
   return { startDate, expiryDate: oneYearFrom(startDate) };
 }
+
+/**
+ * 把后端备注时间（SQLite datetime('now') 返回的 UTC 时间，形如 'YYYY-MM-DD HH:MM:SS'）
+ * 换算成本地时区，显示为 'YYYY-MM-DD HH:MM'。
+ * 直接用 createdAt.slice(0,16) 会把 UTC 当作本地时间，导致比本地慢 8 小时。
+ */
+export function formatNoteTime(createdAt) {
+  if (!createdAt) return '';
+  const d = new Date(`${createdAt.replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return createdAt.slice(0, 16);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day} ${h}:${min}`;
+}

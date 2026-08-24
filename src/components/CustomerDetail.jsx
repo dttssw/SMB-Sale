@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
-import { formatDate } from '../utils/date.js';
+import { formatDate, formatNoteTime } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 import { stageOf } from '../data/constants.js';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-// SQLite datetime('now') 形如 'YYYY-MM-DD HH:MM:SS'，直接截取显示（与外层 createdAt 展示风格一致）
+// 备注时间在 utils/date.js 的 formatNoteTime 里按本地时区换算（datetime('now') 存的是 UTC）
 function timeLabel(createdAt) {
-  if (!createdAt) return '';
-  return createdAt.slice(0, 16);
+  return formatNoteTime(createdAt);
 }
 
 function DetailItem({ label, value, full }) {
