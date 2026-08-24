@@ -28,7 +28,7 @@ function Actions({ onCancel }) {
   );
 }
 
-export function ContractForm({ initial, onSave, onCancel }) {
+export function ContractForm({ initial, onSave, onCancel, notesText }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -37,7 +37,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
     expiryDate: initial?.expiryDate || oneYearFrom(todayStr()),
-    note: initial?.note || '',
+    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -99,7 +99,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
   );
 }
 
-export function ProspectForm({ initial, onSave, onCancel }) {
+export function ProspectForm({ initial, onSave, onCancel, notesText }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -108,7 +108,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
-    note: initial?.note || '',
+    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
