@@ -4,6 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// 统一使用中国时区（UTC+8）：SQLite datetime('now') 存的是 UTC，备注的 [HH:MM] 标记与“今天”判断
+// 都依赖服务器进程时区。这里无条件强制 +08:00（即使部署环境 TZ=UTC 也会覆盖），
+// 避免备注时间比本地慢/快数小时，并保证与前端浏览器（中国时区）显示一致。
+process.env.TZ = 'Asia/Shanghai';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'smb.db');

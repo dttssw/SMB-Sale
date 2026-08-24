@@ -504,4 +504,5 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${PORT}`);
   console.log(`   数据库文件：server/data/smb.db`);
+  console.log(`   服务器时区：${Intl.DateTimeFormat().resolvedOptions().timeZone} · ${new Date().toString()}`);
 });
