@@ -74,6 +74,7 @@ export default function RevenuePanel({ deals, onAdd }) {
             <Tooltip
               formatter={(v) => formatMoney(v)}
               labelFormatter={(m) => `${m.slice(0, 4)}年${Number(m.slice(5))}月`}
+              cursor={false}
             />
             <Bar dataKey="amount" name="新签金额" fill={NEW_COLOR} radius={[4, 4, 0, 0]} maxBarSize={36} />
           </BarChart>

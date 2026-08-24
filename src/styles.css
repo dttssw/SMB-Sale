@@ -127,6 +127,8 @@ body {
 .revenue-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; margin-bottom: 20px; }
 @media (max-width: 900px) { .revenue-grid { grid-template-columns: 1fr; } }
 .chart-box { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fcfcfd; }
+/* Recharts 默认的悬停 cursor 会渲染一块灰色背景，这里统一去掉 */
+.recharts-tooltip-cursor { fill: transparent; }
 .chart-title { font-size: 13px; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
 .pie-legend { display: flex; gap: 18px; justify-content: center; margin-top: 6px; flex-wrap: wrap; }
 .pie-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
