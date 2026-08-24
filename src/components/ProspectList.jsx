@@ -1,7 +1,11 @@
+import { useState } from 'react';
 import Badge from './Badge.jsx';
+import Pagination from './Pagination.jsx';
 import { stageOf } from '../data/constants.js';
 import { daysUntil, formatDate, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
+
+const PER_PAGE = 5;
 
 function PanelHead({ title, desc, onAdd }) {
   return (
@@ -20,12 +24,17 @@ function PanelHead({ title, desc, onAdd }) {
 }
 
 function ProspectTable({ items, isRenew, today, onView }) {
+  const [page, setPage] = useState(1);
   const sorted = [...items].sort((a, b) =>
     (a.nextFollowUp || '9999-12-31').localeCompare(b.nextFollowUp || '9999-12-31')
   );
   const overdue = items.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
   const dueToday = items.filter((p) => p.nextFollowUp === today).length;
-  const cols = isRenew ? 6 : 6;
+  const cols = 6;
+
+  const pages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
+  const cur = Math.min(page, pages);
+  const paged = sorted.slice((cur - 1) * PER_PAGE, cur * PER_PAGE);
 
   return (
     <>
@@ -47,7 +56,7 @@ function ProspectTable({ items, isRenew, today, onView }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((p) => {
+            {paged.map((p) => {
               const stage = stageOf(p.stage);
               const next = p.nextFollowUp ? daysUntil(p.nextFollowUp) : null;
               return (
@@ -79,7 +88,7 @@ function ProspectTable({ items, isRenew, today, onView }) {
                 </tr>
               );
             })}
-            {sorted.length === 0 && (
+            {paged.length === 0 && (
               <tr>
                 <td colSpan={cols} className="empty">
                   {isRenew ? '暂无即将到期的续约跟进客户' : '暂无跟进中的新客户，点击右上角新增'}
@@ -89,6 +98,7 @@ function ProspectTable({ items, isRenew, today, onView }) {
           </tbody>
         </table>
       </div>
+      <Pagination page={cur} total={sorted.length} perPage={PER_PAGE} onChange={setPage} />
     </>
   );
 }
@@ -99,7 +109,7 @@ export default function ProspectList({ prospects, onAdd, onView }) {
   const renewItems = prospects.filter((p) => p.category === 'renew');
 
   return (
-    <>
+    <div className="prospect-grid">
       <section className="panel">
         <PanelHead
           title="🚀 正在跟进的新客户（New）"
@@ -115,6 +125,6 @@ export default function ProspectList({ prospects, onAdd, onView }) {
         />
         <ProspectTable items={renewItems} isRenew today={today} onView={onView} />
       </section>
-    </>
+    </div>
   );
 }

@@ -45,19 +45,13 @@ export default function App() {
       const d = daysUntil(c.expiryDate);
       return d >= 0 && d <= 30;
     }).length;
-    const renewalTotal = sumBy(deals.filter((d) => d.type === 'renewal'), 'amount');
-    const newTotal = sumBy(deals.filter((d) => d.type === 'new'), 'amount');
+    const newDeals = deals.filter((d) => d.type !== 'renewal');
+    const newTotal = sumBy(newDeals, 'amount');
     const monthKey = todayStr().slice(0, 7);
-    const monthRenewal = sumBy(
-      deals.filter((d) => d.type === 'renewal' && monthOf(d.date) === monthKey),
-      'amount'
-    );
-    const monthNew = sumBy(
-      deals.filter((d) => d.type === 'new' && monthOf(d.date) === monthKey),
-      'amount'
-    );
-    const renewalPct = renewalTotal + newTotal > 0 ? Math.round((renewalTotal / (renewalTotal + newTotal)) * 100) : 0;
-    return { overdue, exp30, renewalTotal, newTotal, monthRenewal, monthNew, renewalPct };
+    const monthNew = sumBy(newDeals.filter((d) => monthOf(d.date) === monthKey), 'amount');
+    const newCount = newDeals.length;
+    const monthNewCount = newDeals.filter((d) => monthOf(d.date) === monthKey).length;
+    return { overdue, exp30, newTotal, monthNew, newCount, monthNewCount };
   }, [contracts, deals]);
 
   // ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
@@ -118,7 +112,7 @@ export default function App() {
 
   const saveDeal = async (data) => {
     try {
-      await dealsDb.create({ ...data, id: uid() });
+      await dealsDb.create({ ...data, type: 'new', id: uid() });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -131,6 +125,10 @@ export default function App() {
     try {
       const { note, ...record } = data;
       const saved = await contractsDb.create({ ...record, id: uid() });
+      // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交；续约（Renew）不记录金额
+      if (prospect.category !== 'renew') {
+        await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
+      }
       // 把跟进客户的备注时间线迁移到新在约客户（raw=true 原样迁移，避免叠加时间标记或触发当日合并）
       const prospNotes = await api.listNotes('prospect', prospect.id);
       for (const n of prospNotes) {
@@ -321,21 +319,26 @@ export default function App() {
           sub={`新客 ${newProspectCount} 家 · 续约 ${renewProspectCount} 家`}
         />
         <KpiCard
-          label="本月续约金额"
-          value={formatMoney(stats.monthRenewal)}
-          icon="🔁"
-          tone="ok"
-          valueClass="money"
-          sub={`累计 ${formatMoney(stats.renewalTotal)}`}
-        />
-        <KpiCard
           label="本月新签金额"
           value={formatMoney(stats.monthNew)}
           icon="🆕"
           valueClass="money"
           sub={`累计 ${formatMoney(stats.newTotal)}`}
         />
-        <KpiCard label="续约率" value={stats.renewalPct} unit="%" icon="📊" sub="续约金额占成交总金额比例" />
+        <KpiCard
+          label="新签累计"
+          value={formatMoney(stats.newTotal)}
+          icon="💰"
+          valueClass="money"
+          sub={`共 ${stats.newCount} 笔`}
+        />
+        <KpiCard
+          label="本月新签笔数"
+          value={stats.monthNewCount}
+          unit="笔"
+          icon="📊"
+          sub={`累计 ${stats.newCount} 笔`}
+        />
       </div>
 
       <ExpiringContracts

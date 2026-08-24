@@ -160,7 +160,7 @@ export function ProspectForm({ initial, onSave, onCancel, notesText }) {
 }
 
 export function DealForm({ onSave, onCancel }) {
-  const [form, setForm] = useState({ customer: '', type: 'new', amount: 0, date: todayStr() });
+  const [form, setForm] = useState({ customer: '', amount: 0, date: todayStr() });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
 
@@ -176,16 +176,10 @@ export function DealForm({ onSave, onCancel }) {
       <Field label="客户名称" required full>
         <input value={form.customer} onChange={set('customer')} placeholder="客户 / 公司名称" />
       </Field>
-      <Field label="成交类型" required>
-        <select value={form.type} onChange={set('type')}>
-          <option value="renewal">续约</option>
-          <option value="new">新签</option>
-        </select>
-      </Field>
       <Field label="成交金额（元）" required>
         <input type="number" min="0" step="any" value={form.amount} onChange={set('amount')} />
       </Field>
-      <Field label="签约日期" required full>
+      <Field label="签约日期" required>
         <DatePicker value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} clearable={false} />
       </Field>
       {error && <div className="form-error">⚠️ {error}</div>}

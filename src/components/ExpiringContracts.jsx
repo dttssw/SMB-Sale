@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import Badge from './Badge.jsx';
+import Pagination from './Pagination.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
+
+const PER_PAGE = 5;
 
 function statusOf(expiryDate) {
   const d = daysUntil(expiryDate);
@@ -12,6 +16,7 @@ function statusOf(expiryDate) {
 }
 
 export default function ExpiringContracts({ contracts, onAdd, onView }) {
+  const [page, setPage] = useState(1);
   const sorted = [...contracts].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
   const overdue = sorted.filter((c) => daysUntil(c.expiryDate) < 0).length;
   const exp30 = sorted.filter((c) => {
@@ -22,6 +27,10 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
     const d = daysUntil(c.expiryDate);
     return d > 30 && d <= 90;
   }).length;
+
+  const pages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
+  const cur = Math.min(page, pages);
+  const paged = sorted.slice((cur - 1) * PER_PAGE, cur * PER_PAGE);
 
   return (
     <section className="panel">
@@ -52,7 +61,7 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((c) => {
+            {paged.map((c) => {
               const st = statusOf(c.expiryDate);
               return (
                 <tr key={c.id}>
@@ -78,7 +87,7 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
                 </tr>
               );
             })}
-            {sorted.length === 0 && (
+            {paged.length === 0 && (
               <tr>
                 <td colSpan={6} className="empty">
                   暂无在约客户，点击右上角新增
@@ -88,6 +97,7 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
           </tbody>
         </table>
       </div>
+      <Pagination page={cur} total={sorted.length} perPage={PER_PAGE} onChange={setPage} />
     </section>
   );
 }
