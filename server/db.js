@@ -135,3 +135,45 @@ const prospectCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) =>
 if (!prospectCols.includes('category')) db.exec(`ALTER TABLE prospects ADD COLUMN category TEXT DEFAULT 'new'`);
 if (!prospectCols.includes('contractId')) db.exec(`ALTER TABLE prospects ADD COLUMN contractId TEXT DEFAULT ''`);
 if (!prospectCols.includes('expiryDate')) db.exec(`ALTER TABLE prospects ADD COLUMN expiryDate TEXT`);
+
+// 迁移：把「同一天（本地时区）内」的多条备注合并为一条，以 [HH:MM] 作为时间标记（幂等）
+// 说明：POST /api/notes 只在「新增备注」且「当天」时自动合并；历史已存在的同日多条备注
+// 不会被合并。此迁移在每次服务启动时对存量补做一次归并，让任意环境都能用统一的时间线格式。
+export function mergeNotesByDay(database = db) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const localDateOf = (createdAt) => new Date(String(createdAt).replace(' ', 'T') + 'Z');
+  const dayKey = (d) =>
+    Number.isNaN(d.getTime()) ? null : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  // 按 createdAt 升序取，保证组内保持时间顺序；保留组内最早一条作为合并载体（createdAt 自然成为当天节点）
+  const rows = database.prepare(`SELECT id, customerType, customerId, content, createdAt FROM notes ORDER BY createdAt ASC`).all();
+  const groups = new Map();
+  for (const r of rows) {
+    const day = dayKey(localDateOf(r.createdAt));
+    if (!day) continue;
+    const key = `${r.customerType}|${r.customerId}|${day}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  let mergedCount = 0;
+  for (const arr of groups.values()) {
+    if (arr.length <= 1) continue; // 单条无需合并，保留原样
+    const keep = arr[0];
+    const lines = arr.map((r) => {
+      const d = localDateOf(r.createdAt);
+      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const text = String(r.content || '').trim();
+      // 新逻辑生成的备注已带 [HH:MM] 标记，原样保留，避免重复标注
+      const body = /^\[\d{1,2}:\d{2}\]\s/.test(text) ? text : `[${hm}] ${text}`;
+      return body;
+    });
+    database.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(lines.join('\n'), keep.id);
+    for (const r of arr.slice(1)) database.prepare(`DELETE FROM notes WHERE id = ?`).run(r.id);
+    mergedCount += arr.length - 1;
+  }
+  if (mergedCount > 0) console.log(`✅ 已合并 ${mergedCount} 条同日历史备注（按 [HH:MM] 标准归并为一条）`);
+  return mergedCount;
+}
+mergeNotesByDay();
+
