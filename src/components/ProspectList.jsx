@@ -7,7 +7,7 @@ import { formatMoney } from '../utils/format.js';
 
 const PER_PAGE = 5;
 
-function PanelHead({ title, desc, onAdd }) {
+function PanelHead({ title, desc, onAdd, addLabel }) {
   return (
     <div className="panel-head">
       <div>
@@ -16,7 +16,7 @@ function PanelHead({ title, desc, onAdd }) {
       </div>
       {onAdd && (
         <button className="btn btn-primary" onClick={onAdd}>
-          ＋ 新增跟进客户
+          {addLabel || '＋ 新增跟进客户'}
         </button>
       )}
     </div>
@@ -91,7 +91,7 @@ function ProspectTable({ items, isRenew, today, onView }) {
             {paged.length === 0 && (
               <tr>
                 <td colSpan={cols} className="empty">
-                  {isRenew ? '暂无即将到期的续约跟进客户' : '暂无跟进中的新客户，点击右上角新增'}
+                  {isRenew ? '暂无续约跟进客户，点击右上角新建' : '暂无跟进中的新客户，点击右上角新增'}
                 </td>
               </tr>
             )}
@@ -103,7 +103,7 @@ function ProspectTable({ items, isRenew, today, onView }) {
   );
 }
 
-export default function ProspectList({ prospects, onAdd, onView }) {
+export default function ProspectList({ prospects, onAdd, onAddRenew, onView }) {
   const today = todayStr();
   const newItems = prospects.filter((p) => p.category !== 'renew');
   const renewItems = prospects.filter((p) => p.category === 'renew');
@@ -121,7 +121,9 @@ export default function ProspectList({ prospects, onAdd, onView }) {
       <section className="panel">
         <PanelHead
           title="🔁 续约跟进（Renew）"
-          desc="由到期少于45天的在约客户自动生成，续约完成后自动退出"
+          desc="由到期少于45天的在约客户自动生成，也可手动新建；续约完成后自动退出"
+          onAdd={onAddRenew}
+          addLabel="＋ 新建 Renew 客户"
         />
         <ProspectTable items={renewItems} isRenew today={today} onView={onView} />
       </section>

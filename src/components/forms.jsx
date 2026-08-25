@@ -159,6 +159,61 @@ export function ProspectForm({ initial, onSave, onCancel, notesText }) {
   );
 }
 
+export function RenewForm({ initial, onSave, onCancel, notesText }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    name: initial?.name || '',
+    contact: initial?.contact || '',
+    expectedAmount: initial?.expectedAmount ?? 0,
+    expiryDate: initial?.expiryDate || todayStr(),
+    lastFollowUp: initial?.lastFollowUp || todayStr(),
+    nextFollowUp: initial?.nextFollowUp || '',
+    note: notesText !== undefined ? notesText : initial?.note || '',
+  });
+  const [error, setError] = useState('');
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('请填写客户名称');
+    if (!(form.expectedAmount > 0)) return setError('请填写预计成交金额');
+    if (!form.expiryDate) return setError('请选择续约到期时间');
+    onSave({ ...form, name: form.name.trim(), expectedAmount: Number(form.expectedAmount) });
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <Field label="客户名称" required full>
+        <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
+      </Field>
+      <Field label="联系人">
+        <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
+      </Field>
+      <Field label="预计金额（元）" required>
+        <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
+      </Field>
+      <Field label="续约到期时间" required full>
+        <DatePicker value={form.expiryDate} onChange={(v) => setForm((f) => ({ ...f, expiryDate: v }))} clearable={false} />
+      </Field>
+      <Field label="上次跟进日期">
+        <DatePicker value={form.lastFollowUp} onChange={(v) => setForm((f) => ({ ...f, lastFollowUp: v }))} />
+      </Field>
+      <Field label="下次跟进日期">
+        <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
+      </Field>
+      <Field label="备注" full>
+        <textarea
+          value={form.note}
+          onChange={set('note')}
+          placeholder="续约沟通记录等（保存后追加为该客户的备注时间线）"
+        />
+      </Field>
+      {error && <div className="form-error">⚠️ {error}</div>}
+      <Actions onCancel={onCancel} />
+    </form>
+  );
+}
+
 export function DealForm({ onSave, onCancel }) {
   const [form, setForm] = useState({ customer: '', amount: 0, date: todayStr() });
   const [error, setError] = useState('');

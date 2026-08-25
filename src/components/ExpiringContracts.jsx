@@ -15,7 +15,7 @@ function statusOf(expiryDate) {
   return { label: '正常在约', tone: 'ok' };
 }
 
-export default function ExpiringContracts({ contracts, onAdd, onView }) {
+export default function ExpiringContracts({ contracts, onView }) {
   const [page, setPage] = useState(1);
   const sorted = [...contracts].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
   const overdue = sorted.filter((c) => daysUntil(c.expiryDate) < 0).length;
@@ -39,9 +39,6 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
           <h2>📋 在约客户 · 到期时间</h2>
           <p className="panel-desc">按订阅到期日排序，优先触达即将到期的客户，确保续约不流失</p>
         </div>
-        <button className="btn btn-primary" onClick={onAdd}>
-          ＋ 新增在约客户
-        </button>
       </div>
       <div className="stat-pills">
         <span className="pill pill-danger">已到期 {overdue}</span>
@@ -90,7 +87,7 @@ export default function ExpiringContracts({ contracts, onAdd, onView }) {
             {paged.length === 0 && (
               <tr>
                 <td colSpan={6} className="empty">
-                  暂无在约客户，点击右上角新增
+                  暂无在约客户
                 </td>
               </tr>
             )}

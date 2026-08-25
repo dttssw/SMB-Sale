@@ -11,7 +11,7 @@ import ProspectList from './components/ProspectList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
-import { ContractForm, ProspectForm, DealForm } from './components/forms.jsx';
+import { ContractForm, ProspectForm, RenewForm, DealForm } from './components/forms.jsx';
 import CustomerDetail from './components/CustomerDetail.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -20,6 +20,7 @@ const modalTitle = (m) => {
   if (m.kind === 'contract') return m.data ? '编辑在约客户' : '新增在约客户';
   if (m.kind === 'convert') return '跟进客户转为在约客户';
   if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
+  if (m.kind === 'renew') return m.data ? '编辑续约跟进' : '新建 Renew 客户';
   return '记录成交金额';
 };
 
@@ -98,6 +99,32 @@ export default function App() {
       else {
         // 新跟进客户默认归入 New（Renew 由到期<45天的在约客户自动生成）
         const saved = await prospectsDb.create({ ...record, category: 'new', id: uid() });
+        savedId = saved.id;
+      }
+      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）；仅在备注相对打开时有改动时才追加，避免重复
+      if (note && note !== (modal?.initialNote || ''))
+        await api.createNote({ id: uid(), customerType: 'prospect', customerId: savedId, content: note });
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  // 新建 / 编辑 Renew 续约跟进客户（手动创建，不关联在约客户）
+  const saveRenew = async (data) => {
+    try {
+      const { note, ...record } = data;
+      let savedId = data.id;
+      if (data.id) await prospectsDb.update(record);
+      else {
+        const saved = await prospectsDb.create({
+          ...record,
+          stage: 'negotiation',
+          category: 'renew',
+          contractId: '',
+          id: uid(),
+        });
         savedId = saved.id;
       }
       // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）；仅在备注相对打开时有改动时才追加，避免重复
@@ -227,7 +254,8 @@ export default function App() {
     } catch {
       /* 忽略加载失败，备注框回退为空 */
     }
-    setModal({ kind: customerType, data: customer, initialNote });
+    const kind = customerType === 'prospect' && customer.category === 'renew' ? 'renew' : customerType;
+    setModal({ kind, data: customer, initialNote });
   };
 
   const uploadMaterials = async (files, note) => {
@@ -341,15 +369,12 @@ export default function App() {
         />
       </div>
 
-      <ExpiringContracts
-        contracts={contracts}
-        onAdd={() => setModal({ kind: 'contract' })}
-        onView={openDetail('contract')}
-      />
+      <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
 
       <ProspectList
         prospects={prospects}
         onAdd={() => setModal({ kind: 'prospect' })}
+        onAddRenew={() => setModal({ kind: 'renew' })}
         onView={openDetail('prospect')}
       />
 
@@ -383,6 +408,15 @@ export default function App() {
               initial={modal.data}
               notesText={modal.initialNote}
               onSave={saveProspect}
+              onCancel={() => setModal(null)}
+            />
+          )}
+          {modal.kind === 'renew' && (
+            <RenewForm
+              key={modal.data?.id || 'new'}
+              initial={modal.data}
+              notesText={modal.initialNote}
+              onSave={saveRenew}
               onCancel={() => setModal(null)}
             />
           )}

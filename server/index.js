@@ -176,10 +176,11 @@ function syncRenewals() {
       }
     }
   }
-  // 自动退出：Renew 跟进及其关联在约客户不存在或不再少于45天到期时，删除并清理备注
+  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不存在或不再少于45天到期时清理并删除备注；
+  // 手动新建的 Renew 客户（contractId 为空）保留不删
   const renews = db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all();
   for (const r of renews) {
-    if (!r.contractId || !active.has(r.contractId)) {
+    if (r.contractId && !active.has(r.contractId)) {
       db.prepare(`DELETE FROM notes WHERE customerType = 'prospect' AND customerId = ?`).run(r.id);
       db.prepare(`DELETE FROM prospects WHERE id = ?`).run(r.id);
     }
