@@ -11,8 +11,6 @@ import {
 import { formatDate, monthOf, todayStr } from '../utils/date.js';
 import { formatMoney, sumBy } from '../utils/format.js';
 
-const NEW_COLOR = '#6366f1';
-
 export default function RevenuePanel({ deals, onAdd }) {
   const { monthlyData, totalNew, monthNew, newCount, recent } = useMemo(() => {
     const newDeals = deals.filter((d) => d.type !== 'renewal');
@@ -58,25 +56,35 @@ export default function RevenuePanel({ deals, onAdd }) {
         <h4 className="chart-title">月度新签成交趋势</h4>
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={monthlyData} barGap={4}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+            <defs>
+              <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#8fa0ff" />
+                <stop offset="100%" stopColor="#6366f1" />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,.16)" />
             <XAxis
               dataKey="month"
               tickFormatter={(m) => `${Number(m.slice(5))}月`}
               tickLine={false}
-              axisLine={{ stroke: '#cbd5e1' }}
+              tick={{ fill: '#95a2bd' }}
+              axisLine={{ stroke: '#273251' }}
             />
             <YAxis
               tickFormatter={(v) => (v >= 10000 ? `${(v / 10000).toFixed(1)}万` : v)}
               tickLine={false}
+              tick={{ fill: '#95a2bd' }}
               axisLine={false}
               width={44}
             />
             <Tooltip
               formatter={(v) => formatMoney(v)}
               labelFormatter={(m) => `${m.slice(0, 4)}年${Number(m.slice(5))}月`}
-              cursor={false}
+              cursor={{ fill: 'rgba(124,140,248,.08)' }}
+              contentStyle={{ background: '#141d33', border: '1px solid #273251', borderRadius: 10, fontSize: 12 }}
+              labelStyle={{ color: '#95a2bd' }}
             />
-            <Bar dataKey="amount" name="新签金额" fill={NEW_COLOR} radius={[4, 4, 0, 0]} maxBarSize={36} />
+            <Bar dataKey="amount" name="新签金额" fill="url(#barGrad)" radius={[4, 4, 0, 0]} maxBarSize={36} />
           </BarChart>
         </ResponsiveContainer>
       </div>

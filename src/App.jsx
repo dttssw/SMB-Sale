@@ -405,22 +405,28 @@ export default function App() {
         />
       </div>
 
-      <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
+      <div className="dash-layout">
+        <div className="dash-col">
+          <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
 
-      <ProspectList
-        prospects={prospects}
-        onAdd={() => setModal({ kind: 'prospect' })}
-        onAddRenew={() => setModal({ kind: 'renew' })}
-        onView={openDetail('prospect')}
-      />
+          <ProspectList
+            prospects={prospects}
+            onAdd={() => setModal({ kind: 'prospect' })}
+            onAddRenew={() => setModal({ kind: 'renew' })}
+            onView={openDetail('prospect')}
+          />
+        </div>
 
-      <PartnerList
-        partners={partners}
-        onAdd={() => setModal({ kind: 'partner' })}
-        onView={openDetail('partner')}
-      />
+        <div className="dash-col">
+          <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
 
-      <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
+          <PartnerList
+            partners={partners}
+            onAdd={() => setModal({ kind: 'partner' })}
+            onView={openDetail('partner')}
+          />
+        </div>
+      </div>
 
       <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />
 
