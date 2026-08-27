@@ -10,6 +10,8 @@ import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
 import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
+import WorkJournal from './components/WorkJournal.jsx';
+import ExpiryAlert from './components/ExpiryAlert.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
 import { ContractForm, ProspectForm, RenewForm, PartnerForm, DealForm } from './components/forms.jsx';
@@ -32,32 +34,57 @@ export default function App() {
   const dealsDb = useDbData('deals');
   const partnersDb = useDbData('partners');
   const materialsDb = useDbData('materials');
+  const worklogsDb = useDbData('worklogs');
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
 
-  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading || partnersDb.loading || materialsDb.loading;
-  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error || partnersDb.error || materialsDb.error;
+  const loading =
+    contractsDb.loading ||
+    prospectsDb.loading ||
+    dealsDb.loading ||
+    partnersDb.loading ||
+    materialsDb.loading ||
+    worklogsDb.loading;
+  const dbError =
+    contractsDb.error ||
+    prospectsDb.error ||
+    dealsDb.error ||
+    partnersDb.error ||
+    materialsDb.error ||
+    worklogsDb.error;
 
   const contracts = contractsDb.data;
   const prospects = prospectsDb.data;
   const deals = dealsDb.data;
   const partners = partnersDb.data;
   const materials = materialsDb.data;
+  const worklogs = worklogsDb.data;
 
   const stats = useMemo(() => {
-    const overdue = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
+    const today = todayStr();
+    const overdueFollow = prospects.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
+    const dueTodayFollow = prospects.filter((p) => p.nextFollowUp === today).length;
+    const followDue = overdueFollow + dueTodayFollow;
+
+    const overdueContracts = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
+    const expiring = contracts.filter((c) => {
+      const d = daysUntil(c.expiryDate);
+      return d != null && d <= 45;
+    }).length;
     const exp30 = contracts.filter((c) => {
       const d = daysUntil(c.expiryDate);
-      return d >= 0 && d <= 30;
+      return d != null && d >= 0 && d <= 30;
     }).length;
+
+    const todayWork = worklogs.filter((w) => w.date === today).length;
+
     const newDeals = deals.filter((d) => d.type !== 'renewal');
     const newTotal = sumBy(newDeals, 'amount');
-    const monthKey = todayStr().slice(0, 7);
+    const monthKey = today.slice(0, 7);
     const monthNew = sumBy(newDeals.filter((d) => monthOf(d.date) === monthKey), 'amount');
     const newCount = newDeals.length;
-    const monthNewCount = newDeals.filter((d) => monthOf(d.date) === monthKey).length;
-    return { overdue, exp30, newTotal, monthNew, newCount, monthNewCount };
-  }, [contracts, deals]);
+    return { overdueFollow, dueTodayFollow, followDue, overdueContracts, expiring, exp30, todayWork, newTotal, monthNew, newCount };
+  }, [contracts, deals, prospects, worklogs]);
 
   // ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
   const syncRef = useRef(false);
@@ -311,6 +338,25 @@ export default function App() {
     }
   };
 
+  const addWorklog = async (content) => {
+    try {
+      await worklogsDb.create({ id: uid(), content, date: todayStr() });
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const removeWorklog = async (id) => {
+    if (!window.confirm('确认删除该条工作记录？')) return;
+    try {
+      await worklogsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   const retry = () => {
     setActionError('');
     contractsDb.reload();
@@ -318,11 +364,8 @@ export default function App() {
     dealsDb.reload();
     partnersDb.reload();
     materialsDb.reload();
+    worklogsDb.reload();
   };
-
-  const waitingContractCount = prospects.filter((p) => p.stage === 'contract').length;
-  const newProspectCount = prospects.filter((p) => p.category !== 'renew').length;
-  const renewProspectCount = prospects.filter((p) => p.category === 'renew').length;
 
   if (loading) {
     return (
@@ -365,49 +408,44 @@ export default function App() {
       )}
 
       <div className="kpi-grid">
-        <KpiCard label="在约客户" value={contracts.length} unit="家" icon="📇" sub={`已到期 ${stats.overdue} 家`} />
         <KpiCard
-          label="30天内到期"
-          value={stats.exp30}
+          label="今日需跟进"
+          value={stats.followDue}
           unit="家"
-          icon="⏰"
-          tone="warn"
-          sub="建议尽快安排续约触达"
+          icon="🎯"
+          tone={stats.followDue > 0 ? 'danger' : 'ok'}
+          sub={`逾期 ${stats.overdueFollow} · 今日 ${stats.dueTodayFollow}`}
         />
         <KpiCard
-          label="跟进中客户"
-          value={prospects.length}
+          label="临期在约"
+          value={stats.expiring}
           unit="家"
-          icon="🚀"
+          icon="🔔"
+          tone={stats.expiring > 0 ? 'warn' : 'ok'}
+          sub={`已到期 ${stats.overdueContracts} · 30天内 ${stats.exp30}`}
+        />
+        <KpiCard
+          label="今日记录"
+          value={stats.todayWork}
+          unit="条"
+          icon="📝"
           tone="violet"
-          sub={`新客 ${newProspectCount} 家 · 续约 ${renewProspectCount} 家`}
+          sub="今天做了什么"
         />
         <KpiCard
-          label="本月新签金额"
+          label="本月成交"
           value={formatMoney(stats.monthNew)}
-          icon="🆕"
+          icon="💰"
           valueClass="money"
           sub={`累计 ${formatMoney(stats.newTotal)}`}
         />
-        <KpiCard
-          label="新签累计"
-          value={formatMoney(stats.newTotal)}
-          icon="💰"
-          valueClass="money"
-          sub={`共 ${stats.newCount} 笔`}
-        />
-        <KpiCard
-          label="本月新签笔数"
-          value={stats.monthNewCount}
-          unit="笔"
-          icon="📊"
-          sub={`累计 ${stats.newCount} 笔`}
-        />
       </div>
+
+      <ExpiryAlert contracts={contracts} onView={openDetail('contract')} onRenew={renewContract} />
 
       <div className="dash-layout">
         <div className="dash-col">
-          <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
+          <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />
 
           <ProspectList
             prospects={prospects}
@@ -425,6 +463,8 @@ export default function App() {
             onAdd={() => setModal({ kind: 'partner' })}
             onView={openDetail('partner')}
           />
+
+          <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
         </div>
       </div>
 

@@ -5,7 +5,7 @@ export default function Header({ today }) {
         <div className="logo">💼</div>
         <div>
           <h1>SMB 销售工作台</h1>
-          <div className="subtitle">在约到期 · 跟进客户 · 成交金额 · 合作伙伴 · 材料库</div>
+          <div className="subtitle">今日记录 · 客户跟进 · 临期在约提醒 · 合作伙伴 · 材料库</div>
         </div>
       </div>
       <div className="header-right">

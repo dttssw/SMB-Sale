@@ -96,6 +96,13 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_notes_customer ON notes(customerType, customerId);
+
+  CREATE TABLE IF NOT EXISTS worklogs (
+    id        TEXT PRIMARY KEY,
+    content   TEXT NOT NULL,      -- 当天的工作内容 / 记录
+    date      TEXT NOT NULL,      -- 归属日期 YYYY-MM-DD（默认当天）
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）

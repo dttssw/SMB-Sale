@@ -235,3 +235,43 @@ body {
 .note-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .note-time { color: var(--info); }
 .note-content { font-size: 13px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+
+/* Small button */
+.btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+
+/* Compact revenue */
+.mini-stats.compact { margin-bottom: 12px; }
+.mini-stats.compact .mini-stat { padding: 5px 10px; font-size: 12px; }
+.mini-stats.compact .mini-stat b { font-size: 13px; }
+
+/* Empty block */
+.empty-block { font-size: 13px; color: var(--muted); padding: 22px 0; text-align: center; }
+
+/* ExpiryAlert — 临期在约醒目提醒 */
+.expiry-alert { display: flex; flex-direction: column; gap: 12px; background: linear-gradient(135deg, rgba(249,115,22,.14), rgba(239,68,68,.05)), var(--card); border: 1px solid rgba(249,115,22,.3); border-left: 4px solid var(--warn); border-radius: 14px; padding: 14px 18px; backdrop-filter: blur(10px); box-shadow: var(--shadow); }
+.expiry-alert.calm { background: var(--card); border: 1px solid rgba(34,211,238,.22); border-left: 4px solid var(--ok); flex-direction: row; align-items: center; gap: 12px; }
+.expiry-alert-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.expiry-alert-icon { width: 42px; height: 42px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; background: rgba(249,115,22,.18); flex-shrink: 0; }
+.expiry-alert.calm .expiry-alert-icon { background: var(--ok-soft); }
+.expiry-alert-head strong { font-size: 15px; color: var(--text); display: block; }
+.expiry-alert-head > div:last-of-type span { font-size: 12px; color: var(--muted); }
+.expiry-alert-list { display: flex; flex-direction: column; gap: 8px; }
+.expiry-alert-item { display: flex; align-items: center; gap: 14px; background: rgba(148,163,184,.05); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 14px; }
+.expiry-alert-item-main { flex: 1; min-width: 0; }
+.expiry-alert-item-ops { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+@media (max-width: 640px) { .expiry-alert-item { flex-wrap: wrap; } .expiry-alert-item-ops { width: 100%; justify-content: flex-end; } }
+
+/* WorkJournal — 今日工作记录 */
+.panel-journal .panel-head { margin-bottom: 12px; }
+.work-add { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.work-add textarea { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-family: inherit; background: #0f1729; color: var(--text); resize: vertical; min-height: 72px; outline: none; width: 100%; }
+.work-add textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.work-add-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.work-list { display: flex; flex-direction: column; gap: 16px; max-height: 420px; overflow-y: auto; padding-right: 2px; }
+.work-day { display: flex; flex-direction: column; gap: 8px; }
+.work-day-head { font-size: 12px; font-weight: 700; color: var(--primary); letter-spacing: .2px; padding-bottom: 4px; border-bottom: 1px dashed var(--border); }
+.work-item { background: rgba(148,163,184,.05); border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px 12px; transition: background .15s; }
+.work-item:hover { background: rgba(148,163,184,.1); }
+.work-item-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+.work-item-time { font-size: 12px; color: var(--muted); }
+.work-item-content { font-size: 13px; color: var(--text); white-space: pre-wrap; word-break: break-word; }

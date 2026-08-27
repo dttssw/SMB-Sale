@@ -51,13 +51,14 @@ app.use((req, res, next) => {
 });
 
 // ---- 表结构与字段白名单（表名只允许取自白名单，杜绝注入） ----
-const TABLES = ['contracts', 'prospects', 'deals', 'partners'];
+const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
   prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
+  worklogs: ['id', 'content', 'date'],
 };
 
 const REQUIRED = {
@@ -65,6 +66,7 @@ const REQUIRED = {
   prospects: ['id', 'name', 'stage', 'expectedAmount'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name'],
+  worklogs: ['id', 'content', 'date'],
 };
 
 const NUMBER_COLS = {
@@ -72,6 +74,7 @@ const NUMBER_COLS = {
   prospects: ['expectedAmount'],
   deals: ['amount'],
   partners: [],
+  worklogs: [],
 };
 
 const NOT_FOUND = (table) => TABLES.includes(table);
