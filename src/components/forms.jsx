@@ -214,6 +214,43 @@ export function RenewForm({ initial, onSave, onCancel, notesText }) {
   );
 }
 
+export function PartnerForm({ initial, onSave, onCancel, notesText }) {
+  const [form, setForm] = useState({
+    id: initial?.id || null,
+    name: initial?.name || '',
+    contact: initial?.contact || '',
+    note: notesText !== undefined ? notesText : initial?.note || '',
+  });
+  const [error, setError] = useState('');
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('请填写合作伙伴名称');
+    onSave({ ...form, name: form.name.trim() });
+  };
+
+  return (
+    <form className="form" onSubmit={submit}>
+      <Field label="合作伙伴名称" required full>
+        <input value={form.name} onChange={set('name')} placeholder="如：某某渠道商 / 代理商" />
+      </Field>
+      <Field label="联系人">
+        <input value={form.contact} onChange={set('contact')} placeholder="如：王经理" />
+      </Field>
+      <Field label="备注" full>
+        <textarea
+          value={form.note}
+          onChange={set('note')}
+          placeholder="合作情况、对接记录等（保存后追加为该合作伙伴的备注时间线）"
+        />
+      </Field>
+      {error && <div className="form-error">⚠️ {error}</div>}
+      <Actions onCancel={onCancel} />
+    </form>
+  );
+}
+
 export function DealForm({ onSave, onCancel }) {
   const [form, setForm] = useState({ customer: '', amount: 0, date: todayStr() });
   const [error, setError] = useState('');

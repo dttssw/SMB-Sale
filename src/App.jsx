@@ -8,10 +8,11 @@ import Header from './components/Header.jsx';
 import KpiCard from './components/KpiCard.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
+import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
-import { ContractForm, ProspectForm, RenewForm, DealForm } from './components/forms.jsx';
+import { ContractForm, ProspectForm, RenewForm, PartnerForm, DealForm } from './components/forms.jsx';
 import CustomerDetail from './components/CustomerDetail.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -21,6 +22,7 @@ const modalTitle = (m) => {
   if (m.kind === 'convert') return '跟进客户转为在约客户';
   if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
   if (m.kind === 'renew') return m.data ? '编辑续约跟进' : '新建 Renew 客户';
+  if (m.kind === 'partner') return m.data ? '编辑合作伙伴' : '新建合作伙伴';
   return '记录成交金额';
 };
 
@@ -28,16 +30,18 @@ export default function App() {
   const contractsDb = useDbData('contracts');
   const prospectsDb = useDbData('prospects');
   const dealsDb = useDbData('deals');
+  const partnersDb = useDbData('partners');
   const materialsDb = useDbData('materials');
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
 
-  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading || materialsDb.loading;
-  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error || materialsDb.error;
+  const loading = contractsDb.loading || prospectsDb.loading || dealsDb.loading || partnersDb.loading || materialsDb.loading;
+  const dbError = contractsDb.error || prospectsDb.error || dealsDb.error || partnersDb.error || materialsDb.error;
 
   const contracts = contractsDb.data;
   const prospects = prospectsDb.data;
   const deals = dealsDb.data;
+  const partners = partnersDb.data;
   const materials = materialsDb.data;
 
   const stats = useMemo(() => {
@@ -147,6 +151,26 @@ export default function App() {
     }
   };
 
+  // 新建 / 编辑合作伙伴（不含金额、跟进时间、订阅签约字段）
+  const savePartner = async (data) => {
+    try {
+      const { note, ...record } = data;
+      let savedId = data.id;
+      if (data.id) await partnersDb.update(record);
+      else {
+        const saved = await partnersDb.create({ ...record, id: uid() });
+        savedId = saved.id;
+      }
+      // 表单里填写的备注 → 追加到合作伙伴的备注时间线（不写入表）；仅在备注相对打开时有改动时才追加，避免重复
+      if (note && note !== (modal?.initialNote || ''))
+        await api.createNote({ id: uid(), customerType: 'partner', customerId: savedId, content: note });
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
   const convertToContract = async (prospect, data) => {
     try {
@@ -209,6 +233,17 @@ export default function App() {
     if (!window.confirm('确认删除该跟进客户？')) return;
     try {
       await prospectsDb.remove(id);
+      setActionError('');
+      setModal(null);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const removePartner = async (id) => {
+    if (!window.confirm('确认删除该合作伙伴？')) return;
+    try {
+      await partnersDb.remove(id);
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -281,6 +316,7 @@ export default function App() {
     contractsDb.reload();
     prospectsDb.reload();
     dealsDb.reload();
+    partnersDb.reload();
     materialsDb.reload();
   };
 
@@ -378,6 +414,12 @@ export default function App() {
         onView={openDetail('prospect')}
       />
 
+      <PartnerList
+        partners={partners}
+        onAdd={() => setModal({ kind: 'partner' })}
+        onView={openDetail('partner')}
+      />
+
       <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
 
       <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />
@@ -420,16 +462,27 @@ export default function App() {
               onCancel={() => setModal(null)}
             />
           )}
+          {modal.kind === 'partner' && (
+            <PartnerForm
+              key={modal.data?.id || 'new'}
+              initial={modal.data}
+              notesText={modal.initialNote}
+              onSave={savePartner}
+              onCancel={() => setModal(null)}
+            />
+          )}
           {modal.kind === 'detail' && (
             <CustomerDetail
               customerType={modal.customerType}
               customer={modal.customer}
               onEdit={() => openEditModal(modal.customerType, modal.customer)}
-              onRenew={() => renewContract(modal.customer)}
-              onConvert={() => convertProspect(modal.customer)}
-              onDelete={() =>
-                (modal.customerType === 'contract' ? removeContract(modal.customer.id) : removeProspect(modal.customer.id))
-              }
+              onRenew={modal.customerType === 'contract' ? () => renewContract(modal.customer) : undefined}
+              onConvert={modal.customerType === 'prospect' ? () => convertProspect(modal.customer) : undefined}
+              onDelete={() => {
+                if (modal.customerType === 'contract') removeContract(modal.customer.id);
+                else if (modal.customerType === 'prospect') removeProspect(modal.customer.id);
+                else removePartner(modal.customer.id);
+              }}
             />
           )}
           {modal.kind === 'deal' && (

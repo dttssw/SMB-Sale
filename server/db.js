@@ -68,6 +68,14 @@ db.exec(`
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS partners (
+    id        TEXT PRIMARY KEY,
+    name      TEXT NOT NULL,
+    contact   TEXT DEFAULT '',
+    note      TEXT DEFAULT '',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS materials (
     id         TEXT PRIMARY KEY,
     name       TEXT NOT NULL,      -- 原始文件名
@@ -81,7 +89,7 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS notes (
     id           TEXT PRIMARY KEY,
-    customerType TEXT NOT NULL,      -- 'contract' | 'prospect'
+    customerType TEXT NOT NULL,      -- 'contract' | 'prospect' | 'partner'
     customerId   TEXT NOT NULL,      -- 关联客户 id
     content      TEXT NOT NULL,      -- 备注内容
     createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
@@ -134,6 +142,7 @@ const migrateNotes = (customerType, table) => {
 };
 migrateNotes('contract', 'contracts');
 migrateNotes('prospect', 'prospects');
+migrateNotes('partner', 'partners');
 
 // 迁移：跟进客户增加 New/Renew 分类与续约关联字段（现有客户默认均为 New，幂等）
 const prospectCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);

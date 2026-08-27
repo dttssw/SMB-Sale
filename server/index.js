@@ -51,24 +51,27 @@ app.use((req, res, next) => {
 });
 
 // ---- 表结构与字段白名单（表名只允许取自白名单，杜绝注入） ----
-const TABLES = ['contracts', 'prospects', 'deals'];
+const TABLES = ['contracts', 'prospects', 'deals', 'partners'];
 
 const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
   prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
+  partners: ['id', 'name', 'contact', 'note'],
 };
 
 const REQUIRED = {
   contracts: ['id', 'name', 'plan', 'contractAmount', 'startDate', 'expiryDate'],
   prospects: ['id', 'name', 'stage', 'expectedAmount'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
+  partners: ['id', 'name'],
 };
 
 const NUMBER_COLS = {
   contracts: ['contractAmount'],
   prospects: ['expectedAmount'],
   deals: ['amount'],
+  partners: [],
 };
 
 const NOT_FOUND = (table) => TABLES.includes(table);
@@ -263,13 +266,13 @@ app.delete('/api/materials/:id', (req, res, next) => {
 });
 
 // ---- 客户备注（时间线）路由 ----
-const NOTE_TYPES = ['contract', 'prospect'];
+const NOTE_TYPES = ['contract', 'prospect', 'partner'];
 
 // 列表：GET /api/notes?customerType=&customerId=
 app.get('/api/notes', (req, res, next) => {
   const { customerType, customerId } = req.query;
   if (!NOTE_TYPES.includes(customerType)) {
-    return res.status(400).json({ error: 'customerType 必须为 contract 或 prospect' });
+    return res.status(400).json({ error: 'customerType 必须为 contract、prospect 或 partner' });
   }
   if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
   try {
@@ -292,7 +295,7 @@ app.post('/api/notes', (req, res, next) => {
       throw e;
     }
     if (!NOTE_TYPES.includes(customerType)) {
-      const e = new Error('customerType 必须为 contract 或 prospect');
+      const e = new Error('customerType 必须为 contract、prospect 或 partner');
       e.status = 400;
       throw e;
     }
@@ -446,7 +449,7 @@ app.delete('/api/:table/:id', (req, res, next) => {
     const result = db.transaction(() => {
       const del = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
       if (del.changes) {
-        const type = table === 'contracts' ? 'contract' : table === 'prospects' ? 'prospect' : null;
+        const type = table === 'contracts' ? 'contract' : table === 'prospects' ? 'prospect' : table === 'partners' ? 'partner' : null;
         if (type) db.prepare(`DELETE FROM notes WHERE customerType = ? AND customerId = ?`).run(type, id);
         // 删除在约客户时，级联清理其自动生成的 Renew 跟进及其备注
         if (table === 'contracts') {

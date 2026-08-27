@@ -22,6 +22,7 @@ function DetailItem({ label, value, full }) {
 
 export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete }) {
   const isContract = customerType === 'contract';
+  const isPartner = customerType === 'partner';
   const [menuOpen, setMenuOpen] = useState(false);
   const [notes, setNotes] = useState([]);
   const [text, setText] = useState('');
@@ -80,7 +81,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
   const items = [
     { label: '编辑', onClick: onEdit },
     ...(isContract && onRenew ? [{ label: '续约', onClick: onRenew }] : []),
-    ...(!isContract && onConvert ? [{ label: '转为在约', onClick: onConvert }] : []),
+    ...(!isContract && !isPartner && onConvert ? [{ label: '转为在约', onClick: onConvert }] : []),
     { label: '删除', danger: true, onClick: onDelete },
   ];
 
@@ -120,6 +121,11 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
             <DetailItem label="合同金额" value={`${formatMoney(customer.contractAmount)} 元`} />
             <DetailItem label="订阅开始时间" value={formatDate(customer.startDate)} />
             <DetailItem label="订阅到期时间" value={formatDate(customer.expiryDate)} full />
+          </>
+        ) : isPartner ? (
+          <>
+            <DetailItem label="合作伙伴名称" value={customer.name} full />
+            <DetailItem label="联系人" value={customer.contact || '—'} />
           </>
         ) : (
           <>
