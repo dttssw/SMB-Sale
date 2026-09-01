@@ -38,6 +38,25 @@ export function monthOf(dateStr) {
 }
 
 /**
+ * 判断某个日期（YYYY-MM-DD）是否属于「本周」（周一 ~ 周日）。
+ * 用于「今日工作记录」只展示本周内容，把更早的历史记录隐藏起来。
+ * 周起始按中国习惯取周一（getDay() 0=周日）。
+ */
+export function isInCurrentWeek(dateStr) {
+  if (!dateStr) return false;
+  const d = parseDate(dateStr);
+  const now = new Date();
+  // 本周一：周日(0) 往前退 6 天，其余到周一（1 - weekday）
+  const mondayOffset = now.getDay() === 0 ? -6 : 1 - now.getDay();
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return d >= monday && d <= sunday;
+}
+
+/**
  * 订阅默认一年：返回「开始时间 + 1 年 − 1 天」的到期时间。
  * 例如开始时间 2026-08-14 → 到期时间 2027-08-13。
  */

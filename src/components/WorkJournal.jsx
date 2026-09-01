@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatCnDate, formatNoteTime, todayStr } from '../utils/date.js';
+import { formatCnDate, formatNoteTime, isInCurrentWeek, todayStr } from '../utils/date.js';
 
 // 按天分组标题：今天 / 昨天 / 具体日期（含星期）
 function dayLabel(date) {
@@ -15,7 +15,10 @@ function dayLabel(date) {
 export default function WorkJournal({ entries, onAdd, onRemove }) {
   const [text, setText] = useState('');
   const today = todayStr();
-  const todayCount = entries.filter((w) => w.date === today).length;
+  // 只展示本周（周一~周日）的记录，更早的历史记录自动隐藏
+  const weekEntries = entries.filter((w) => isInCurrentWeek(w.date));
+  const todayCount = weekEntries.filter((w) => w.date === today).length;
+  const hiddenCount = entries.length - weekEntries.length;
 
   const add = (e) => {
     e.preventDefault();
@@ -26,10 +29,10 @@ export default function WorkJournal({ entries, onAdd, onRemove }) {
   };
 
   // 按归属日期倒序分组；组内按创建时间倒序（后端已按 createdAt DESC 返回）
-  const dayOrder = [...new Set(entries.map((w) => w.date))].sort((a, b) => b.localeCompare(a));
+  const dayOrder = [...new Set(weekEntries.map((w) => w.date))].sort((a, b) => b.localeCompare(a));
   const groups = dayOrder.map((date) => ({
     date,
-    items: entries.filter((w) => w.date === date).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    items: weekEntries.filter((w) => w.date === date).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   }));
 
   return (
@@ -57,7 +60,9 @@ export default function WorkJournal({ entries, onAdd, onRemove }) {
       </form>
 
       {groups.length === 0 ? (
-        <div className="empty-block">还没有任何工作记录，写下一笔开始吧 ✍️</div>
+        <div className="empty-block">
+          {hiddenCount > 0 ? '本周还没有记录，写下一笔开始吧 ✍️' : '还没有任何工作记录，写下一笔开始吧 ✍️'}
+        </div>
       ) : (
         <div className="work-list">
           {groups.map((g) => (
@@ -77,6 +82,10 @@ export default function WorkJournal({ entries, onAdd, onRemove }) {
             </div>
           ))}
         </div>
+      )}
+
+      {hiddenCount > 0 && (
+        <div className="work-hidden-note">💾 更早的 {hiddenCount} 条记录已隐藏，仅展示本周内容</div>
       )}
     </section>
   );
