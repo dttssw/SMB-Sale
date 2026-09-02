@@ -443,30 +443,42 @@ export default function App() {
 
       <ExpiryAlert contracts={contracts} onView={openDetail('contract')} onRenew={renewContract} />
 
-      {/* 主体：New / Renew 跟进客户，全宽置顶；工作记录以客户下的备注为主，故详情内查看 */}
-      <ProspectList
-        prospects={prospects}
-        onAdd={() => setModal({ kind: 'prospect' })}
-        onAddRenew={() => setModal({ kind: 'renew' })}
-        onView={openDetail('prospect')}
-      />
-
-      <div className="dash-layout">
-        <div className="dash-col">
-          <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />
+      <section className="workspace">
+        <div className="workspace-head">
+          <div>
+            <h2>🎯 跟进工作台</h2>
+            <p className="panel-desc">
+              New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
+            </p>
+          </div>
         </div>
-
-        <div className="dash-col">
-          <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
-
-          <PartnerList
-            partners={partners}
-            onAdd={() => setModal({ kind: 'partner' })}
-            onView={openDetail('partner')}
+        <div className="workspace-grid">
+          <ProspectList
+            prospects={prospects}
+            variant="new"
+            onAdd={() => setModal({ kind: 'prospect' })}
+            onView={openDetail('prospect')}
           />
-
-          <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
+          <ProspectList
+            prospects={prospects}
+            variant="renew"
+            onAdd={() => setModal({ kind: 'renew' })}
+            onView={openDetail('prospect')}
+          />
+          <div className="workspace-side">
+            <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />
+            <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
+          </div>
         </div>
+      </section>
+
+      <div className="bottom-grid">
+        <PartnerList
+          partners={partners}
+          onAdd={() => setModal({ kind: 'partner' })}
+          onView={openDetail('partner')}
+        />
+        <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
       </div>
 
       <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />
