@@ -443,16 +443,17 @@ export default function App() {
 
       <ExpiryAlert contracts={contracts} onView={openDetail('contract')} onRenew={renewContract} />
 
+      {/* 主体：New / Renew 跟进客户，全宽置顶；工作记录以客户下的备注为主，故详情内查看 */}
+      <ProspectList
+        prospects={prospects}
+        onAdd={() => setModal({ kind: 'prospect' })}
+        onAddRenew={() => setModal({ kind: 'renew' })}
+        onView={openDetail('prospect')}
+      />
+
       <div className="dash-layout">
         <div className="dash-col">
           <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />
-
-          <ProspectList
-            prospects={prospects}
-            onAdd={() => setModal({ kind: 'prospect' })}
-            onAddRenew={() => setModal({ kind: 'renew' })}
-            onView={openDetail('prospect')}
-          />
         </div>
 
         <div className="dash-col">

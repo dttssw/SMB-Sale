@@ -109,24 +109,34 @@ export default function ProspectList({ prospects, onAdd, onAddRenew, onView }) {
   const renewItems = prospects.filter((p) => p.category === 'renew');
 
   return (
-    <div className="prospect-grid">
-      <section className="panel">
-        <PanelHead
-          title="🚀 正在跟进的新客户（New）"
-          desc="按下次跟进时间排序，逾期未跟进的客户优先处理"
-          onAdd={onAdd}
-        />
-        <ProspectTable items={newItems} isRenew={false} today={today} onView={onView} />
-      </section>
-      <section className="panel">
-        <PanelHead
-          title="🔁 续约跟进（Renew）"
-          desc="由到期少于45天的在约客户自动生成，也可手动新建；续约完成后自动退出"
-          onAdd={onAddRenew}
-          addLabel="＋ 新建 Renew 客户"
-        />
-        <ProspectTable items={renewItems} isRenew today={today} onView={onView} />
-      </section>
-    </div>
+    <section className="hero-prospects">
+      <div className="hero-prospects-head">
+        <div>
+          <h2>🎯 跟进客户清单</h2>
+          <p className="panel-desc">
+            主体工作区 —— New / Renew 分流跟进；每条客户的工作记录写在「详情 → 备注」里
+          </p>
+        </div>
+      </div>
+      <div className="prospect-grid">
+        <section className="panel">
+          <PanelHead
+            title="🚀 正在跟进的新客户（New）"
+            desc="按下次跟进时间排序，逾期未跟进的客户优先处理"
+            onAdd={onAdd}
+          />
+          <ProspectTable items={newItems} isRenew={false} today={today} onView={onView} />
+        </section>
+        <section className="panel">
+          <PanelHead
+            title="🔁 续约跟进（Renew）"
+            desc="由到期少于45天的在约客户自动生成，也可手动新建；续约完成后自动退出"
+            onAdd={onAddRenew}
+            addLabel="＋ 新建 Renew 客户"
+          />
+          <ProspectTable items={renewItems} isRenew today={today} onView={onView} />
+        </section>
+      </div>
+    </section>
   );
 }

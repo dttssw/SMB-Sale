@@ -44,7 +44,7 @@ body {
 ::-webkit-scrollbar-thumb { background: #2b3653; border-radius: 8px; }
 ::-webkit-scrollbar-thumb:hover { background: #3a4a74; }
 .container { max-width: 1680px; margin: 0 auto; padding: 20px 22px 48px; display: flex; flex-direction: column; gap: 18px; }
-.dash-layout { display: grid; grid-template-columns: minmax(0,1.55fr) minmax(0,1fr); gap: 18px; align-items: start; }
+.dash-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.35fr); gap: 18px; align-items: start; }
 @media (max-width: 1180px) { .dash-layout { grid-template-columns: 1fr; } }
 .dash-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 
@@ -86,10 +86,41 @@ body {
 .panel-head h2::after { content: ''; width: 34px; height: 3px; border-radius: 3px; background: linear-gradient(90deg,var(--primary),var(--violet)); }
 .panel-desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+/* New / Renew 客户清单 — 主体工作区（全宽置顶） */
+.hero-prospects { display: flex; flex-direction: column; gap: 16px; }
+.hero-prospects-head {
+  background: linear-gradient(120deg, rgba(124,140,248,.14), rgba(167,139,250,.08));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.hero-prospects-head h2 { font-size: 20px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+.hero-prospects-head h2::after { content: ''; width: 42px; height: 4px; border-radius: 3px; background: linear-gradient(90deg,var(--primary),var(--violet)); }
+.hero-prospects-head .panel-desc { font-size: 12.5px; color: var(--muted); margin-top: 6px; max-width: 720px; }
+
 /* New / Renew 两列 */
 .prospect-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; align-items: start; }
 @media (max-width: 1080px) { .prospect-grid { grid-template-columns: 1fr; } }
-.prospect-grid .panel { height: 100%; }
+.prospect-grid .panel { height: 100%; position: relative; overflow: hidden; }
+.prospect-grid .panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--violet));
+  opacity: .9;
+}
+.prospect-grid .panel-head h2 { font-size: 18px; }
+.prospect-grid .table th { padding: 12px 12px; }
+.prospect-grid .table td { padding: 14px 12px; }
+.prospect-grid .pill { font-size: 12px; }
 
 /* Pagination */
 .pagination { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 14px; }
