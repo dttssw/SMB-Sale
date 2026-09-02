@@ -23,13 +23,16 @@ const FILE_ICONS = {
   jpeg: '🖼️',
   gif: '🖼️',
   webp: '🖼️',
+  svg: '🖼️',
   mp4: '🎬',
   mp3: '🎵',
   json: '🧩',
 };
 
-// 支持浏览器内联预览的类型
+// 支持浏览器直接新标签内联预览的类型（无脚本执行风险：PDF / 图片）
 const PREVIEWABLE = new Set(['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp']);
+// HTML/SVG 可内嵌脚本（XSS 风险），需通过沙箱 iframe 隔离预览，不能直接新标签打开
+const SANDBOX_PREVIEWABLE = new Set(['html', 'htm', 'svg']);
 
 function extOf(name) {
   const i = name.lastIndexOf('.');
@@ -49,6 +52,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
   const [note, setNote] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null); // { name, url }
 
   const chooseFiles = (e) => {
     const list = Array.from(e.target.files || []);
@@ -75,12 +79,25 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
 
   const totalSize = files.reduce((s, f) => s + (f.size || 0), 0);
 
+  const closePreview = () => setPreview(null);
+
+  // 打开预览：PDF / 图片直接在浏览器新标签查看；HTML/SVG 用沙箱 iframe 内联加载，拒执行脚本（防 XSS）
+  const openPreview = (m) => {
+    const ext = (m.ext || extOf(m.name)).replace('.', '');
+    if (SANDBOX_PREVIEWABLE.has(ext)) {
+      setPreview({ name: m.name, url: m.url });
+    } else {
+      window.open(m.url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
-    <section className="panel">
-      <div className="panel-head">
+    <>
+      <section className="panel">
+        <div className="panel-head">
         <div>
           <h2>📁 材料库</h2>
-          <p className="panel-desc">上传产品方案、报价单、合同模板等资料（PDF / PPT / Word / Excel / HTML / 图片等），支持在线预览与下载</p>
+          <p className="panel-desc">上传产品方案、报价单、合同模板等资料（PDF / PPT / Word / Excel / HTML / SVG / 图片等），支持在线预览与下载（HTML/SVG 以沙箱隔离预览）</p>
         </div>
       </div>
 
@@ -95,7 +112,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
             multiple
             hidden
             onChange={chooseFiles}
-            accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.html,.htm,.md,.txt,.png,.jpg,.jpeg,.gif,.webp,.zip,.rar,.7z,.mp4,.mp3,.json,.wps"
+            accept=".pdf,.ppt,.pptx,.doc,.docx,.xls,.xlsx,.csv,.html,.htm,.svg,.md,.txt,.png,.jpg,.jpeg,.gif,.webp,.zip,.rar,.7z,.mp4,.mp3,.json,.wps"
           />
           {files.length > 0 && (
             <div className="material-pending">
@@ -156,7 +173,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
             {materials.map((m) => {
               const ext = (m.ext || extOf(m.name)).replace('.', '');
               const icon = FILE_ICONS[ext] || '📄';
-              const previewable = PREVIEWABLE.has(ext);
+              const previewable = PREVIEWABLE.has(ext) || SANDBOX_PREVIEWABLE.has(ext);
               return (
                 <tr key={m.id}>
                   <td>
@@ -177,9 +194,9 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
                   <td className="num">{m.createdAt ? m.createdAt.slice(0, 10) : '—'}</td>
                   <td className="ops">
                     {previewable ? (
-                      <a className="link-btn" href={m.url} target="_blank" rel="noreferrer">
+                      <button className="link-btn" type="button" onClick={() => openPreview(m)}>
                         预览
-                      </a>
+                      </button>
                     ) : null}
                     <a
                       className="link-btn"
@@ -206,6 +223,30 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
           </tbody>
         </table>
       </div>
-    </section>
+
+      </section>
+
+      {preview && (
+        <div className="preview-overlay" onClick={closePreview}>
+          <div className="preview-box" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-head">
+              <span className="preview-title" title={preview.name}>
+                {preview.name}
+              </span>
+              <span className="preview-tag">沙箱预览</span>
+              <button className="icon-btn" onClick={closePreview} aria-label="关闭">
+                ✕
+              </button>
+            </div>
+            <iframe
+              className="preview-iframe"
+              title={preview.name}
+              src={preview.url}
+              sandbox=""
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

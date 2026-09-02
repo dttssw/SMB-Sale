@@ -51,7 +51,7 @@ npm start       # 生产模式运行于端口 3001
 - 客户套餐升级为**产品**，可选：专业版、旗舰版、BE版、PE版、SaaS专业版、SaaS旗舰版、Duo、Duo Credit（数据库字段仍为 `plan`，界面统一展示为「产品」）。
 - 在约客户订阅默认一年：选定**订阅开始时间**后，到期时间自动设为一年后（前一天）；反向，选定**订阅到期时间**后，开始时间自动设为一年前（加一天），双向自动联动。
 - 日期选择器支持**年 / 月 / 日下拉直接选年份**，无需在日历中逐月翻到其他年份；更改年月时自动收敛非法日期（如 1月31日 改到 2月 → 自动变为月末），可选日期可一键清空。
-- 材料库文件存储在 `server/uploads/`，文件元数据存于 SQLite，可批量上传、预览、下载与删除；可执行 / 脚本类型（exe、bat、sh、js 等）禁止上传，html / svg 等含脚本风险的类型以附件方式下载而非内联渲染。
+- 材料库文件存储在 `server/uploads/`，文件元数据存于 SQLite，可批量上传、预览、下载与删除；可执行 / 脚本类型（exe、bat、sh、js 等）禁止上传；html / svg 等含脚本风险的类型通过**沙箱 iframe（`sandbox=""`，同时禁用脚本与同源，阻断 XSS）隔离预览**，PDF / 图片则直接内联预览。
 - 业务常量（产品、跟进阶段）见 `src/data/constants.js`。
 
 ## API 一览
@@ -72,7 +72,7 @@ npm start       # 生产模式运行于端口 3001
 | POST | `/api/materials` | 上传材料（multipart，字段 `file` + 可选 `note`，单个 ≤ 100MB） |
 | GET | `/api/materials/:id/download` | 以原始文件名下载材料 |
 | DELETE | `/api/materials/:id` | 删除材料（同时删除磁盘文件） |
-| GET | `/uploads/:storedName` | 材料静态资源（PDF/图片可在线预览） |
+| GET | `/uploads/:storedName` | 材料静态资源（PDF / 图片 / HTML / SVG 可在线预览；HTML/SVG 前端经沙箱 iframe 隔离加载） |
 | GET | `/api/health` | 健康检查 |
 
 ## 目录结构

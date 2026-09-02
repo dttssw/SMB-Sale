@@ -471,8 +471,10 @@ app.delete('/api/:table/:id', (req, res, next) => {
   }
 });
 
-// 材料库文件静态托管：支持 PDF / 图片等在线预览；html/svg 等存在脚本风险的类型强制下载而非内联渲染
-const INLINE_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp']);
+// 材料库文件静态托管：PDF / 图片 / HTML / SVG 支持在线预览。
+// 说明：HTML/SVG 内可嵌入脚本（XSS 风险），前端刻意用沙箱 iframe（sandbox="" 禁用脚本与同源）加载，
+// 后端此处放开内联渲染（不再强制 attachment），使 /uploads/ 下的 html/svg 能以 inline 方式拉到内容供沙箱预览。
+const INLINE_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.html', '.htm', '.svg']);
 app.use(
   '/uploads',
   (req, res, next) => {

@@ -169,6 +169,14 @@ body {
 .material-filename { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-btn + .link-btn { margin-left: 8px; }
 
+/* Material preview overlay (HTML/SVG sandboxed preview) */
+.preview-overlay { position: fixed; inset: 0; background: rgba(2,6,16,.72); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 70; }
+.preview-box { background: #141d33; border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 1080px; height: 86vh; box-shadow: 0 24px 60px rgba(0,0,0,.55); display: flex; flex-direction: column; overflow: hidden; }
+.preview-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.preview-title { font-size: 13px; font-weight: 700; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-tag { font-size: 11px; font-weight: 600; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.preview-iframe { flex: 1; width: 100%; border: none; background: #fff; }
+
 /* DatePicker */
 .datepicker { display: flex; align-items: center; gap: 6px; width: 100%; }
 .datepicker select { flex: 1 1 0; min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 7px 2px; font-size: 13px; font-family: inherit; background: #0f1729; color: var(--text); outline: none; transition: border-color .15s; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
