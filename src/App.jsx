@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, formatNoteTime, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
-import { formatMoney, sumBy } from './utils/format.js';
+import { sumBy } from './utils/format.js';
 import { PRODUCTS } from './data/constants.js';
 import Header from './components/Header.jsx';
-import KpiCard from './components/KpiCard.jsx';
+import Sidebar from './components/Sidebar.jsx';
+import Home from './components/Home.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
 import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
 import WorkJournal from './components/WorkJournal.jsx';
-import ExpiryAlert from './components/ExpiryAlert.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
 import { ContractForm, ProspectForm, RenewForm, PartnerForm, DealForm } from './components/forms.jsx';
@@ -28,6 +28,17 @@ const modalTitle = (m) => {
   return '记录成交金额';
 };
 
+// 左侧导航板块
+const SECTIONS = [
+  { key: 'home', label: '总览', icon: '🏠', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
+  { key: 'journal', label: '今日工作', icon: '📝', desc: '记下每天做了什么，按天归档、方便复盘' },
+  { key: 'follow', label: '客户跟进', icon: '🎯', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
+  { key: 'contracts', label: '在约客户', icon: '📋', desc: '在约订阅参考清单，临期客户优先处理' },
+  { key: 'revenue', label: '成交金额', icon: '💰', desc: '本月 / 累计成交回顾，心里有底' },
+  { key: 'partners', label: '合作伙伴', icon: '🤝', desc: '渠道商 / 代理商登记，可随时补备注' },
+  { key: 'materials', label: '材料库', icon: '📁', desc: '方案 / 报价 / 合同模板等资料集中管理' },
+];
+
 export default function App() {
   const contractsDb = useDbData('contracts');
   const prospectsDb = useDbData('prospects');
@@ -37,6 +48,9 @@ export default function App() {
   const worklogsDb = useDbData('worklogs');
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [nav, setNav] = useState('home');
+
+  const active = SECTIONS.find((s) => s.key === nav) || SECTIONS[0];
 
   const loading =
     contractsDb.loading ||
@@ -85,6 +99,9 @@ export default function App() {
     const newCount = newDeals.length;
     return { overdueFollow, dueTodayFollow, followDue, overdueContracts, expiring, exp30, todayWork, newTotal, monthNew, newCount };
   }, [contracts, deals, prospects, worklogs]);
+
+  // 侧边导航角标（仅在有数量时显示）
+  const navBadges = { follow: stats.followDue, contracts: stats.expiring, journal: stats.todayWork };
 
   // ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
   const syncRef = useRef(false);
@@ -367,121 +384,126 @@ export default function App() {
     worklogsDb.reload();
   };
 
+  const today = formatCnDate(todayStr());
+  const shell = (title, icon, desc, content, badges = {}) => (
+    <div className="app-shell">
+      <Sidebar sections={SECTIONS} active={active.key} onSelect={setNav} today={today} badges={badges} />
+      <main className="app-main">
+        <Header today={today} title={title} icon={icon} desc={desc} />
+        <div className="app-content">
+          {actionError && (
+            <div className="db-banner error">
+              <span>⚠️ {actionError}</span>
+              <button className="icon-btn" onClick={() => setActionError('')} aria-label="关闭">
+                ✕
+              </button>
+            </div>
+          )}
+          {content}
+        </div>
+        <footer className="footer">
+          SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），上传材料保存在 server/uploads，由 Node API 读写，增删改实时生效
+        </footer>
+      </main>
+    </div>
+  );
+
   if (loading) {
-    return (
-      <div className="container">
-        <Header today={formatCnDate(todayStr())} />
-        <div className="db-banner">🔄 正在连接数据库，加载数据…</div>
-      </div>
+    return shell(
+      'SMB 销售工作台',
+      '💼',
+      '正在连接数据服务',
+      <div className="db-banner">🔄 正在连接数据库，加载数据…</div>
     );
   }
 
   if (dbError) {
-    return (
-      <div className="container">
-        <Header today={formatCnDate(todayStr())} />
-        <div className="db-error">
-          <h3>⚠️ 无法连接数据服务</h3>
-          <p>{dbError}</p>
-          <p className="db-error-hint">
-            请先在终端运行 <code>npm run server</code> 启动后端（默认端口 3001），然后点击重试。
-          </p>
-          <button className="btn btn-primary" onClick={retry}>
-            重试
-          </button>
-        </div>
+    return shell(
+      'SMB 销售工作台',
+      '💼',
+      '数据服务未就绪',
+      <div className="db-error">
+        <h3>⚠️ 无法连接数据服务</h3>
+        <p>{dbError}</p>
+        <p className="db-error-hint">
+          请先在终端运行 <code>npm run server</code> 启动后端（默认端口 3001），然后点击重试。
+        </p>
+        <button className="btn btn-primary" onClick={retry}>
+          重试
+        </button>
       </div>
     );
   }
 
-  return (
-    <div className="container">
-      <Header today={formatCnDate(todayStr())} />
-
-      {actionError && (
-        <div className="db-banner error">
-          <span>⚠️ {actionError}</span>
-          <button className="icon-btn" onClick={() => setActionError('')} aria-label="关闭">
-            ✕
-          </button>
-        </div>
-      )}
-
-      <div className="kpi-grid">
-        <KpiCard
-          label="今日需跟进"
-          value={stats.followDue}
-          unit="家"
-          icon="🎯"
-          tone={stats.followDue > 0 ? 'danger' : 'ok'}
-          sub={`逾期 ${stats.overdueFollow} · 今日 ${stats.dueTodayFollow}`}
+  let content;
+  switch (active.key) {
+    case 'home':
+      content = (
+        <Home
+          stats={stats}
+          contracts={contracts}
+          today={todayStr()}
+          onView={openDetail('contract')}
+          onRenew={renewContract}
         />
-        <KpiCard
-          label="临期在约"
-          value={stats.expiring}
-          unit="家"
-          icon="🔔"
-          tone={stats.expiring > 0 ? 'warn' : 'ok'}
-          sub={`已到期 ${stats.overdueContracts} · 30天内 ${stats.exp30}`}
-        />
-        <KpiCard
-          label="今日记录"
-          value={stats.todayWork}
-          unit="条"
-          icon="📝"
-          tone="violet"
-          sub="今天做了什么"
-        />
-        <KpiCard
-          label="本月成交"
-          value={formatMoney(stats.monthNew)}
-          icon="💰"
-          valueClass="money"
-          sub={`累计 ${formatMoney(stats.newTotal)}`}
-        />
-      </div>
-
-      <ExpiryAlert contracts={contracts} onView={openDetail('contract')} onRenew={renewContract} />
-
-      <section className="workspace">
-        <div className="workspace-head">
-          <div>
-            <h2>🎯 跟进工作台</h2>
-            <p className="panel-desc">
-              New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
-            </p>
+      );
+      break;
+    case 'journal':
+      content = <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />;
+      break;
+    case 'follow':
+      content = (
+        <section className="workspace">
+          <div className="workspace-head">
+            <div>
+              <h2>🎯 客户跟进</h2>
+              <p className="panel-desc">
+                New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
+              </p>
+            </div>
           </div>
-        </div>
-        <div className="workspace-grid">
-          <ProspectList
-            prospects={prospects}
-            variant="new"
-            onAdd={() => setModal({ kind: 'prospect' })}
-            onView={openDetail('prospect')}
-          />
-          <ProspectList
-            prospects={prospects}
-            variant="renew"
-            onAdd={() => setModal({ kind: 'renew' })}
-            onView={openDetail('prospect')}
-          />
-          <div className="workspace-side">
-            <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />
-            <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />
+          <div className="workspace-grid">
+            <ProspectList
+              prospects={prospects}
+              variant="new"
+              onAdd={() => setModal({ kind: 'prospect' })}
+              onView={openDetail('prospect')}
+            />
+            <ProspectList
+              prospects={prospects}
+              variant="renew"
+              onAdd={() => setModal({ kind: 'renew' })}
+              onView={openDetail('prospect')}
+            />
           </div>
-        </div>
-      </section>
-
-      <div className="bottom-grid">
+        </section>
+      );
+      break;
+    case 'contracts':
+      content = <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />;
+      break;
+    case 'revenue':
+      content = <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />;
+      break;
+    case 'partners':
+      content = (
         <PartnerList
           partners={partners}
           onAdd={() => setModal({ kind: 'partner' })}
           onView={openDetail('partner')}
         />
-        <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />
-      </div>
+      );
+      break;
+    case 'materials':
+      content = <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />;
+      break;
+    default:
+      content = null;
+  }
 
-      <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />
+  return (
+    <>
+      {shell(active.label, active.icon, active.desc, content, navBadges)}
 
       {modal && (
         <Modal title={modalTitle(modal)} onClose={() => setModal(null)}>
@@ -549,10 +571,6 @@ export default function App() {
           )}
         </Modal>
       )}
-
-      <footer className="footer">
-        SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），上传材料保存在 server/uploads，由 Node API 读写，增删改实时生效
-      </footer>
-    </div>
+    </>
   );
 }

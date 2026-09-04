@@ -1,14 +1,14 @@
-export default function Header({ today }) {
+export default function Header({ today, title = 'SMB 销售工作台', icon = '💼', desc = '' }) {
   return (
-    <header className="header">
-      <div className="header-left">
-        <div className="logo">💼</div>
-        <div>
-          <h1>SMB 销售工作台</h1>
-          <div className="subtitle">今日记录 · 客户跟进 · 临期在约提醒 · 合作伙伴 · 材料库</div>
+    <header className="topbar">
+      <div className="topbar-left">
+        <div className="topbar-title">
+          <span className="topbar-icon">{icon}</span>
+          <span>{title}</span>
         </div>
+        {desc ? <div className="topbar-desc">{desc}</div> : null}
       </div>
-      <div className="header-right">
+      <div className="topbar-right">
         <span className="today-chip">📅 {today}</span>
       </div>
     </header>
