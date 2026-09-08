@@ -54,8 +54,8 @@ app.use((req, res, next) => {
 const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
-  contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate'],
+  contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'customerId'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
   worklogs: ['id', 'content', 'date'],
@@ -107,6 +107,49 @@ function findRow(table, id) {
   return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
 }
 
+// ---- 客户主档（统一档案）----
+// 同一家公司在「跟进 / 在约」板块通过 customerId 指向同一条 customers 记录，
+// 使名称 / 联系人 / 备注全局一致，不再复制粘贴。合作伙伴（partners）保持独立档案。
+function customerById(id) {
+  return db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id);
+}
+
+// 把某客户主档的姓名 / 联系人同步镜像到所有指向它的在约 / 跟进角色行，保证各板块看到一致资料
+function mirrorCustomer(customerId) {
+  const c = customerById(customerId);
+  if (!c) return;
+  db.prepare(`UPDATE contracts SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact, customerId);
+  db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact, customerId);
+}
+
+// 依据请求体解析 / 创建客户主档，返回该主档的 { customerId, name, contact }。
+// 若请求体带 customerId（如由跟进入转在约 / 手动关联），则复用该主档；否则新建。
+function attachCustomerIdentity(table, body) {
+  const hasName = body && body.name != null;
+  const hasContact = body && body.contact != null;
+  const name = hasName ? String(body.name).trim() : '';
+  const contact = hasContact ? String(body.contact).trim() : '';
+  let cid = body && body.customerId ? String(body.customerId) : '';
+  if (cid) {
+    const c = customerById(cid);
+    if (!c) {
+      db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
+    } else {
+      const newName = name || c.name;
+      const newContact = hasContact ? contact : c.contact;
+      if (newName !== c.name || newContact !== c.contact) {
+        db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(newName, newContact, cid);
+      }
+    }
+  } else {
+    cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
+  }
+  const c = customerById(cid);
+  mirrorCustomer(cid);
+  return { customerId: cid, name: c.name, contact: c.contact };
+}
+
 // ---- 日期 / 备注相关工具（后端本地时区；SQLite datetime('now') 存的是 UTC）----
 const pad2 = (n) => String(n).padStart(2, '0');
 function dateKey(d) {
@@ -130,22 +173,34 @@ function daysUntil(dateStr) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.round((target - today) / 86400000);
 }
-// 取某跟进客户最后一条备注的本地日期 → 上次跟进日期，下次跟进为 3 天后
-function lastFollowUpDates(prospectId) {
+// 取某客户主档最后一条备注的本地日期 → 其所有跟进角色的上次跟进日期，下次跟进为 3 天后
+function lastFollowUpDates(customerId) {
   const last = db
-    .prepare(`SELECT createdAt FROM notes WHERE customerType = 'prospect' AND customerId = ? ORDER BY createdAt DESC LIMIT 1`)
-    .get(prospectId);
+    .prepare(`SELECT createdAt FROM notes WHERE customerType = 'customer' AND customerId = ? ORDER BY createdAt DESC LIMIT 1`)
+    .get(customerId);
   if (!last) return null;
   const d = localDateOfDb(last.createdAt);
   if (Number.isNaN(d.getTime())) return null;
   const lf = dateKey(d);
   return { lastFollowUp: lf, nextFollowUp: addDays(lf, 3) };
 }
-// 跟上跟进客户的上次/下次跟进日期（以备注时间线为准）
+// 重算某客户主档下所有跟进角色的上次/下次跟进日期
+function updateFollowUpsForCustomer(customerId) {
+  const dates = lastFollowUpDates(customerId);
+  if (dates) {
+    db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE customerId = ?`).run(
+      dates.lastFollowUp,
+      dates.nextFollowUp,
+      customerId
+    );
+  }
+}
+// 更新所有跟进客户的上次/下次跟进日期（以客户主档备注时间线为准）
 function reindexProspectFollowUps() {
-  const pros = db.prepare(`SELECT id FROM prospects`).all();
+  const pros = db.prepare(`SELECT id, customerId FROM prospects`).all();
   for (const p of pros) {
-    const dates = lastFollowUpDates(p.id);
+    if (!p.customerId) continue;
+    const dates = lastFollowUpDates(p.customerId);
     if (dates) {
       db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
         dates.lastFollowUp,
@@ -165,25 +220,32 @@ function syncRenewals() {
     if (d != null && d < RENEW_WINDOW_DAYS) {
       active.add(c.id);
       const existing = db.prepare(`SELECT * FROM prospects WHERE category = 'renew' AND contractId = ?`).get(c.id);
-      const data = { name: c.name, contact: c.contact || '', expectedAmount: c.contractAmount, expiryDate: c.expiryDate };
+      // 复用在约客户的客户主档：续约跟进与在约客户共享同一份名称 / 联系人 / 备注
+      let cid = c.customerId;
+      if (!cid || !customerById(cid)) {
+        const identity = attachCustomerIdentity('prospects', { name: c.name, contact: c.contact });
+        cid = identity.customerId;
+        db.prepare(`UPDATE contracts SET customerId = ?, name = ?, contact = ? WHERE id = ?`).run(cid, c.name, c.contact || '', c.id);
+      }
+      const cust = customerById(cid) || { name: c.name, contact: c.contact || '' };
+      const data = { name: cust.name, contact: cust.contact || '', expectedAmount: c.contractAmount, expiryDate: c.expiryDate };
       if (existing) {
         db.prepare(
-          `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, expiryDate = @expiryDate WHERE id = @id`
-        ).run({ ...data, id: existing.id });
+          `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, expiryDate = @expiryDate, customerId = @customerId WHERE id = @id`
+        ).run({ ...data, customerId: cid, id: existing.id });
       } else {
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
         db.prepare(
-          `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate) VALUES (?, ?, 'negotiation', ?, ?, '', NULL, 'renew', ?, ?)`
-        ).run(id, data.name, data.contact, data.expectedAmount, c.id, data.expiryDate);
+          `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, customerId) VALUES (?, ?, 'negotiation', ?, ?, '', NULL, 'renew', ?, ?, ?)`
+        ).run(id, data.name, data.contact, data.expectedAmount, c.id, data.expiryDate, cid);
       }
     }
   }
-  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不存在或不再少于45天到期时清理并删除备注；
-  // 手动新建的 Renew 客户（contractId 为空）保留不删
+  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不再少于45天到期时移除该跟进角色。
+  // 备注属于共享的客户主档时间线，这里只删除角色行、不动 customer 与 notes；手动新建的 Renew 客户（contractId 为空）保留不删。
   const renews = db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all();
   for (const r of renews) {
     if (r.contractId && !active.has(r.contractId)) {
-      db.prepare(`DELETE FROM notes WHERE customerType = 'prospect' AND customerId = ?`).run(r.id);
       db.prepare(`DELETE FROM prospects WHERE id = ?`).run(r.id);
     }
   }
@@ -265,7 +327,8 @@ app.delete('/api/materials/:id', (req, res, next) => {
 });
 
 // ---- 客户备注（时间线）路由 ----
-const NOTE_TYPES = ['contract', 'prospect', 'partner'];
+// customer：客户主档（跟进 / 在约 共用同一条时间线）；partner：合作伙伴独立档案
+const NOTE_TYPES = ['contract', 'prospect', 'partner', 'customer'];
 
 // 清理超过 1 个月的旧备注（自动删除；SQLite datetime('now') 为 UTC，与 createdAt 一致）
 function purgeOldNotes() {
@@ -283,7 +346,7 @@ function purgeOldNotes() {
 app.get('/api/notes', (req, res, next) => {
   const { customerType, customerId } = req.query;
   if (!NOTE_TYPES.includes(customerType)) {
-    return res.status(400).json({ error: 'customerType 必须为 contract、prospect 或 partner' });
+    return res.status(400).json({ error: 'customerType 必须为 contract、prospect、partner 或 customer' });
   }
   if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
   purgeOldNotes();
@@ -307,7 +370,7 @@ app.post('/api/notes', (req, res, next) => {
       throw e;
     }
     if (!NOTE_TYPES.includes(customerType)) {
-      const e = new Error('customerType 必须为 contract、prospect 或 partner');
+      const e = new Error('customerType 必须为 contract、prospect、partner 或 customer');
       e.status = 400;
       throw e;
     }
@@ -330,16 +393,9 @@ app.post('/api/notes', (req, res, next) => {
     );
     const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id);
 
-    // 若为跟进客户：用最后一次添加备注的日期作为上次跟进，下次跟进自动设为3天后
-    if (customerType === 'prospect') {
-      const dates = lastFollowUpDates(customerId);
-      if (dates) {
-        db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
-          dates.lastFollowUp,
-          dates.nextFollowUp,
-          customerId
-        );
-      }
+    // 客户主档备注：用最后一次添加备注的日期作为该客户下所有跟进角色的上次跟进，下次跟进自动设为3天后
+    if (customerType === 'customer') {
+      updateFollowUpsForCustomer(customerId);
     }
     res.status(201).json(saved);
   } catch (err) {
@@ -360,16 +416,9 @@ app.put('/api/notes/:id', (req, res, next) => {
     const result = db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(text, req.params.id);
     if (!result.changes) return res.status(404).json({ error: '备注不存在' });
     const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(req.params.id);
-    // 若为跟进客户：更新备注后同步重算上次/下次跟进日期
-    if (saved.customerType === 'prospect') {
-      const dates = lastFollowUpDates(saved.customerId);
-      if (dates) {
-        db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
-          dates.lastFollowUp,
-          dates.nextFollowUp,
-          saved.customerId
-        );
-      }
+    // 客户主档备注：更新备注后同步重算该客户下所有跟进角色的上次/下次跟进日期
+    if (saved.customerType === 'customer') {
+      updateFollowUpsForCustomer(saved.customerId);
     }
     res.json(saved);
   } catch (err) {
@@ -401,6 +450,15 @@ app.post('/api/sync/renewals', (req, res, next) => {
 
 // ---- REST API ----
 
+// 客户主档客户列表（只读，供统一档案视图使用）：GET /api/customers
+app.get('/api/customers', (req, res, next) => {
+  try {
+    res.json(db.prepare(`SELECT * FROM customers ORDER BY createdAt DESC`).all());
+  } catch (err) {
+    next(err);
+  }
+});
+
 // 列表：GET /api/:table
 app.get('/api/:table', (req, res, next) => {
   const table = req.params.table;
@@ -417,7 +475,13 @@ app.post('/api/:table', (req, res, next) => {
   const table = req.params.table;
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
-    const row = sanitize(table, req.body || {});
+    let body = req.body || {};
+    // 在约 / 跟进统一走客户主档：解析/创建 customers，并让该角色行引用 customerId
+    if (table === 'contracts' || table === 'prospects') {
+      const identity = attachCustomerIdentity(table, body);
+      body = { ...body, customerId: identity.customerId, name: identity.name, contact: identity.contact };
+    }
+    const row = sanitize(table, body);
     const keys = Object.keys(row);
     const placeholders = keys.map((k) => `@${k}`).join(', ');
     db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`).run(row);
@@ -435,7 +499,17 @@ app.put('/api/:table/:id', (req, res, next) => {
   try {
     const existing = findRow(table, id);
     if (!existing) return res.status(404).json({ error: '记录不存在' });
-    const row = sanitize(table, { ...existing, ...req.body, id });
+    let body = { ...existing, ...req.body, id };
+    // 编辑在约 / 跟进客户的身份字段（名称/联系人）时，更新客户主档，并同步镜像到所有同 customerId 的角色行
+    if (table === 'contracts' || table === 'prospects') {
+      const hasIdentityField =
+        req.body && (req.body.name !== undefined || req.body.contact !== undefined || req.body.customerId !== undefined);
+      if (hasIdentityField) {
+        const identity = attachCustomerIdentity(table, body);
+        body = { ...body, customerId: identity.customerId, name: identity.name, contact: identity.contact };
+      }
+    }
+    const row = sanitize(table, body);
     const sets = COLUMNS[table]
       .filter((k) => k in row)
       .map((k) => `${k} = @${k}`)
@@ -447,28 +521,55 @@ app.put('/api/:table/:id', (req, res, next) => {
   }
 });
 
+// 删除在约客户：级联清理其关联的 Renew 跟进；仅当该客户主档不再有任何角色时，才连同主档与备注一并删除
+function deleteContractCascade(id) {
+  const c = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
+  if (!c) return 0;
+  const cid = c.customerId;
+  db.prepare(`DELETE FROM prospects WHERE category = 'renew' AND contractId = ?`).run(id);
+  db.prepare(`DELETE FROM contracts WHERE id = ?`).run(id);
+  const remaining = cid
+    ? db.prepare(`SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`).get(cid, cid).c
+    : 0;
+  if (cid && remaining <= 0) {
+    db.prepare(`DELETE FROM notes WHERE customerType = 'customer' AND customerId = ?`).run(cid);
+    db.prepare(`DELETE FROM customers WHERE id = ?`).run(cid);
+  }
+  return 1;
+}
+
+// 删除跟进角色：保留共享的客户主档与备注（当客户主档还有其他角色，如已转在约），仅当无任何角色时才一并清理
+function deleteProspectCascade(id) {
+  const p = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(id);
+  if (!p) return 0;
+  const cid = p.customerId;
+  db.prepare(`DELETE FROM prospects WHERE id = ?`).run(id);
+  const remaining = cid
+    ? db.prepare(`SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`).get(cid, cid).c
+    : 0;
+  if (cid && remaining <= 0) {
+    db.prepare(`DELETE FROM notes WHERE customerType = 'customer' AND customerId = ?`).run(cid);
+    db.prepare(`DELETE FROM customers WHERE id = ?`).run(cid);
+  }
+  return 1;
+}
+
 // 删除：DELETE /api/:table/:id
 app.delete('/api/:table/:id', (req, res, next) => {
   const table = req.params.table;
   const id = req.params.id;
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
-    const result = db.transaction(() => {
-      const del = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
-      if (del.changes) {
-        const type = table === 'contracts' ? 'contract' : table === 'prospects' ? 'prospect' : table === 'partners' ? 'partner' : null;
-        if (type) db.prepare(`DELETE FROM notes WHERE customerType = ? AND customerId = ?`).run(type, id);
-        // 删除在约客户时，级联清理其自动生成的 Renew 跟进及其备注
-        if (table === 'contracts') {
-          db.prepare(
-            `DELETE FROM notes WHERE customerType = 'prospect' AND customerId IN (SELECT id FROM prospects WHERE category = 'renew' AND contractId = ?)`
-          ).run(id);
-          db.prepare(`DELETE FROM prospects WHERE category = 'renew' AND contractId = ?`).run(id);
-        }
-      }
-      return del;
-    })();
-    if (!result.changes) return res.status(404).json({ error: '记录不存在' });
+    let changes = 0;
+    if (table === 'contracts') changes = deleteContractCascade(id);
+    else if (table === 'prospects') changes = deleteProspectCascade(id);
+    else if (table === 'partners') {
+      changes = db.prepare(`DELETE FROM partners WHERE id = ?`).run(id).changes;
+      if (changes) db.prepare(`DELETE FROM notes WHERE customerType = 'partner' AND customerId = ?`).run(id);
+    } else {
+      changes = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id).changes;
+    }
+    if (!changes) return res.status(404).json({ error: '记录不存在' });
     res.json({ ok: true });
   } catch (err) {
     next(err);

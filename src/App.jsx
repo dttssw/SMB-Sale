@@ -199,19 +199,15 @@ export default function App() {
     }
   };
 
-  // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
+  // 跟进中的客户 → 转为在约客户：复用跟进入的客户主档（customerId），使其与在约客户共享同一份名称/联系人/备注时间线
   const convertToContract = async (prospect, data) => {
     try {
-      const saved = await contractsDb.create({ ...data, id: uid() });
+      const saved = await contractsDb.create({ ...data, id: uid(), customerId: prospect.customerId });
       // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交；续约（Renew）不记录金额
       if (prospect.category !== 'renew') {
         await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
       }
-      // 把跟进客户的备注时间线迁移到新在约客户（每条独立成行）
-      const prospNotes = await api.listNotes('prospect', prospect.id);
-      for (const n of prospNotes) {
-        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content });
-      }
+      // 备注时间线已在客户主档上共享（不再复制粘贴），直接移除跟进角色即可（主档与备注保留）
       await prospectsDb.remove(prospect.id);
       await runSync();
       setActionError('');

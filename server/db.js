@@ -103,6 +103,14 @@ db.exec(`
     date      TEXT NOT NULL,      -- 归属日期 YYYY-MM-DD（默认当天）
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- 客户主档：同一家公司在「跟进 / 在约」板块共享同一条记录，杜绝复制粘贴
+  CREATE TABLE IF NOT EXISTS customers (
+    id        TEXT PRIMARY KEY,
+    name      TEXT NOT NULL,      -- 客户名称（统一主档，同一家公司一份）
+    contact   TEXT DEFAULT '',    -- 联系人（统一主档）
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）
@@ -210,4 +218,69 @@ export function splitMergedNotes(database = db) {
   return changed;
 }
 splitMergedNotes();
+
+// 迁移：建立「客户主档」统一档案，让同一家公司在「跟进 / 在约」板块共享同一份资料与备注。
+//  - contracts / prospects 通过 customerId 指向 customers（同一家公司的唯一身份）
+//  - 备注统一存放到 customerType='customer' 下，按 customerId 汇聚成同一条时间线
+//  - 合作伙伴（partners）保持独立档案，不与客户主档关联
+const contractColsForCust = db.prepare(`PRAGMA table_info(contracts)`).all().map((c) => c.name);
+if (!contractColsForCust.includes('customerId')) db.exec(`ALTER TABLE contracts ADD COLUMN customerId TEXT DEFAULT ''`);
+const prospectColsForCust = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
+if (!prospectColsForCust.includes('customerId')) db.exec(`ALTER TABLE prospects ADD COLUMN customerId TEXT DEFAULT ''`);
+
+const newCustomerId = (name, contact) => {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(id, name || '', contact || '');
+  return id;
+};
+
+db.transaction(() => {
+  // 1) 为没有（或指向已丢失主档的）在约 / 跟进客户补建客户主档并回填 customerId
+  const contracts = db.prepare(`SELECT * FROM contracts`).all();
+  for (const c of contracts) {
+    let cid = c.customerId;
+    if (!cid || !db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(cid)) {
+      cid = newCustomerId(c.name, c.contact);
+      db.prepare(`UPDATE contracts SET customerId = ? WHERE id = ?`).run(cid, c.id);
+    }
+  }
+  const prospects = db.prepare(`SELECT * FROM prospects`).all();
+  for (const p of prospects) {
+    let cid;
+    // 续约跟进（contractId 关联在约客户）→ 与在约客户共用同一个客户主档
+    if (p.contractId) {
+      const c = db.prepare(`SELECT customerId FROM contracts WHERE id = ?`).get(p.contractId);
+      cid = c && c.customerId;
+    }
+    if (!cid && p.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(p.customerId)) cid = p.customerId;
+    if (!cid) cid = newCustomerId(p.name, p.contact);
+    db.prepare(`UPDATE prospects SET customerId = ? WHERE id = ?`).run(cid, p.id);
+  }
+
+  // 2) 以在约客户为准，统一客户主档名称 / 联系人，并同步镜像到所有同 customerId 的角色行
+  for (const c of contracts) {
+    if (!c.customerId) continue;
+    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(c.name, c.contact || '', c.customerId);
+    db.prepare(`UPDATE contracts SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
+    db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
+  }
+
+  // 3) 备注迁移：跟进 / 在约 的备注统一挂到客户主档（customerType='customer'），汇聚为同一条时间线
+  const contractNotes = db
+    .prepare(`SELECT n.id, c.customerId FROM notes n JOIN contracts c ON n.customerId = c.id WHERE n.customerType = 'contract'`)
+    .all();
+  for (const n of contractNotes) {
+    db.prepare(`UPDATE notes SET customerType = 'customer', customerId = ? WHERE id = ?`).run(n.customerId, n.id);
+  }
+  const prospectNotes = db
+    .prepare(`SELECT n.id, p.customerId FROM notes n JOIN prospects p ON n.customerId = p.id WHERE n.customerType = 'prospect'`)
+    .all();
+  for (const n of prospectNotes) {
+    db.prepare(`UPDATE notes SET customerType = 'customer', customerId = ? WHERE id = ?`).run(n.customerId, n.id);
+  }
+
+  // 4) 备注已进入时间线，清空源行的 note 字段，避免 migrateNotes 下次启动重复迁移
+  db.prepare(`UPDATE contracts SET note = '' WHERE customerId != '' AND note != ''`).run();
+  db.prepare(`UPDATE prospects SET note = '' WHERE customerId != '' AND note != ''`).run();
+})();
 

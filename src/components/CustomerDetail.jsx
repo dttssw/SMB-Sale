@@ -29,6 +29,10 @@ function DetailItem({ label, value, full }) {
 export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete }) {
   const isContract = customerType === 'contract';
   const isPartner = customerType === 'partner';
+  // 客户主档：跟进 / 在约 共用同一条备注时间线（customerType='customer'，以 customerId 为准）
+  // 合作伙伴保持独立档案，备注仍按 partner + 自身 id
+  const noteType = isPartner ? 'partner' : 'customer';
+  const noteCid = isPartner ? customer.id : customer.customerId;
   const [menuOpen, setMenuOpen] = useState(false);
   const [notes, setNotes] = useState([]);
   const [text, setText] = useState('');
@@ -42,7 +46,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
     let alive = true;
     setNotesLoading(true);
     api
-      .listNotes(customerType, customer.id)
+      .listNotes(noteType, noteCid)
       .then((rows) => {
         if (alive) {
           setNotes(rows);
@@ -58,14 +62,14 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
     return () => {
       alive = false;
     };
-  }, [customerType, customer.id]);
+  }, [noteType, noteCid]);
 
   const addNote = async (e) => {
     e.preventDefault();
     const content = text.trim();
     if (!content) return;
     try {
-      const saved = await api.createNote({ id: uid(), customerType, customerId: customer.id, content });
+      const saved = await api.createNote({ id: uid(), customerType: noteType, customerId: noteCid, content });
       // 每条备注独立成行，直接插到最前即可（按 createdAt DESC 展示）
       setNotes((prev) => [saved, ...prev]);
       setText('');
