@@ -59,6 +59,7 @@ export const api = {
   listNotes: (customerType, customerId) =>
     request(`/notes?customerType=${encodeURIComponent(customerType)}&customerId=${encodeURIComponent(customerId)}`),
   createNote: (data) => request('/notes', { method: 'POST', body: JSON.stringify(data) }),
+  updateNote: (id, content) => request(`/notes/${id}`, { method: 'PUT', body: JSON.stringify({ content }) }),
   removeNote: (id) => request(`/notes/${id}`, { method: 'DELETE' }),
   // 同步续约跟进：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
   syncRenewals: () => request('/sync/renewals', { method: 'POST' }),

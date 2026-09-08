@@ -157,44 +157,57 @@ if (!prospectCols.includes('category')) db.exec(`ALTER TABLE prospects ADD COLUM
 if (!prospectCols.includes('contractId')) db.exec(`ALTER TABLE prospects ADD COLUMN contractId TEXT DEFAULT ''`);
 if (!prospectCols.includes('expiryDate')) db.exec(`ALTER TABLE prospects ADD COLUMN expiryDate TEXT`);
 
-// 迁移：把「同一天（本地时区）内」的多条备注合并为一条，以 [HH:MM] 作为时间标记（幂等）
-// 说明：POST /api/notes 只在「新增备注」且「当天」时自动合并；历史已存在的同日多条备注
-// 不会被合并。此迁移在每次服务启动时对存量补做一次归并，让任意环境都能用统一的时间线格式。
-export function mergeNotesByDay(database = db) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const localDateOf = (createdAt) => new Date(String(createdAt).replace(' ', 'T') + 'Z');
-  const dayKey = (d) =>
-    Number.isNaN(d.getTime()) ? null : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-  // 按 createdAt 升序取，保证组内保持时间顺序；保留组内最早一条作为合并载体（createdAt 自然成为当天节点）
-  const rows = database.prepare(`SELECT id, customerType, customerId, content, createdAt FROM notes ORDER BY createdAt ASC`).all();
-  const groups = new Map();
+// 迁移：把「同日合并」的历史备注拆分成独立备注，让每条备注都能单独编辑 / 删除（与「今日工作记录」一致）。
+// 旧版本会把同一天（本地时区）的多条备注合并成一条，以 [HH:MM] 作为时间标记；新版本取消合并、每条备注独立成行，
+// 因此这里把存量合并行拆开，并把 [HH:MM] 标记还原为该条备注的真实时间（写入 createdAt），实现幂等。
+export function splitMergedNotes(database = db) {
+  const rows = database
+    .prepare(`SELECT id, customerType, customerId, content, createdAt FROM notes ORDER BY createdAt ASC`)
+    .all();
+  const MARKER = /^\[(\d{1,2}):(\d{2})\]\s*(.*)$/;
+  let changed = 0;
   for (const r of rows) {
-    const day = dayKey(localDateOf(r.createdAt));
-    if (!day) continue;
-    const key = `${r.customerType}|${r.customerId}|${day}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(r);
-  }
+    const lines = String(r.content || '').split('\n');
+    const entries = [];
+    let cur = null;
+    for (const line of lines) {
+      const m = line.match(MARKER);
+      if (m) {
+        cur = { text: m[3].trim(), h: +m[1], mi: +m[2] };
+        entries.push(cur);
+      } else if (cur) {
+        // 无时间标记的行视为上一条备注的续行，归并到该条里
+        cur.text = (cur.text ? cur.text + '\n' : '') + line;
+      } else {
+        cur = { text: line, h: null, mi: null };
+        entries.push(cur);
+      }
+    }
+    if (!entries.length || entries.every((e) => e.h == null)) continue; // 无时间标记的原始备注，保持不变
 
-  let mergedCount = 0;
-  for (const arr of groups.values()) {
-    if (arr.length <= 1) continue; // 单条无需合并，保留原样
-    const keep = arr[0];
-    const lines = arr.map((r) => {
-      const d = localDateOf(r.createdAt);
-      const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-      const text = String(r.content || '').trim();
-      // 新逻辑生成的备注已带 [HH:MM] 标记，原样保留，避免重复标注
-      const body = /^\[\d{1,2}:\d{2}\]\s/.test(text) ? text : `[${hm}] ${text}`;
-      return body;
+    // 以原备注的本地日期为基准，结合 [HH:MM] 还原各条的真实时间
+    const base = new Date(String(r.createdAt).replace(' ', 'T') + 'Z');
+    if (Number.isNaN(base.getTime())) continue;
+    const y = base.getFullYear();
+    const mo = base.getMonth();
+    const da = base.getDate();
+    const rowsNew = entries.map((e) => {
+      let ts = r.createdAt;
+      if (e.h != null) ts = new Date(y, mo, da, e.h, e.mi, 0, 0).toISOString().slice(0, 19).replace('T', ' ');
+      return { id: crypto.randomUUID(), customerType: r.customerType, customerId: r.customerId, content: e.text, createdAt: ts };
     });
-    database.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(lines.join('\n'), keep.id);
-    for (const r of arr.slice(1)) database.prepare(`DELETE FROM notes WHERE id = ?`).run(r.id);
-    mergedCount += arr.length - 1;
+    // 单条且无改动则跳过，避免每次启动都改写
+    if (rowsNew.length === 1 && rowsNew[0].content === r.content && rowsNew[0].createdAt === r.createdAt) continue;
+
+    database.transaction(() => {
+      database.prepare(`DELETE FROM notes WHERE id = ?`).run(r.id);
+      const ins = database.prepare(`INSERT INTO notes (id, customerType, customerId, content, createdAt) VALUES (?, ?, ?, ?, ?)`);
+      for (const nr of rowsNew) ins.run(nr.id, nr.customerType, nr.customerId, nr.content, nr.createdAt);
+    })();
+    changed += rowsNew.length;
   }
-  if (mergedCount > 0) console.log(`✅ 已合并 ${mergedCount} 条同日历史备注（按 [HH:MM] 标准归并为一条）`);
-  return mergedCount;
+  if (changed > 0) console.log(`✅ 已将 ${changed} 条「同日合并」备注拆分为独立备注`);
+  return changed;
 }
-mergeNotesByDay();
+splitMergedNotes();
 

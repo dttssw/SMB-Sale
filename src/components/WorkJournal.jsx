@@ -12,9 +12,11 @@ function dayLabel(date) {
   return formatCnDate(date);
 }
 
-export default function WorkJournal({ entries, onAdd, onRemove }) {
+export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
   const [text, setText] = useState('');
   const [view, setView] = useState('week'); // 'week' 本周 | 'all' 全部（含历史）
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState('');
   const today = todayStr();
   // 本周（周一~周日）的记录；更早的历史记录在「全部」视图下可查阅
   const weekEntries = entries.filter((w) => isInCurrentWeek(w.date));
@@ -28,6 +30,26 @@ export default function WorkJournal({ entries, onAdd, onRemove }) {
     if (!content) return;
     onAdd(content);
     setText('');
+  };
+
+  const startEdit = (w) => {
+    setEditId(w.id);
+    setEditText(w.content);
+  };
+  const cancelEdit = () => {
+    setEditId(null);
+    setEditText('');
+  };
+  const saveEdit = async () => {
+    const content = editText.trim();
+    if (!content) return;
+    try {
+      await onEdit(editId, content);
+      setEditId(null);
+      setEditText('');
+    } catch (err) {
+      // 错误由父级横幅展示，保留编辑框以便重试
+    }
   };
 
   // 按归属日期倒序分组；组内按创建时间倒序（后端已按 createdAt DESC 返回）
@@ -93,11 +115,38 @@ export default function WorkJournal({ entries, onAdd, onRemove }) {
                 <div key={w.id} className="work-item">
                   <div className="work-item-meta">
                     <span className="work-item-time">{formatNoteTime(w.createdAt).slice(11, 16)}</span>
-                    <button className="link-btn danger" onClick={() => onRemove(w.id)}>
-                      删除
-                    </button>
+                    <span className="work-item-ops">
+                      <button className="link-btn" onClick={() => startEdit(w)}>
+                        编辑
+                      </button>
+                      <button className="link-btn danger" onClick={() => onRemove(w.id)}>
+                        删除
+                      </button>
+                    </span>
                   </div>
-                  <div className="work-item-content">{w.content}</div>
+                  {editId === w.id ? (
+                    <div className="note-edit">
+                      <textarea value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus />
+                      <div className="note-edit-actions">
+                        <span className="note-form-hint">保存后将覆盖该条记录</span>
+                        <div>
+                          <button type="button" className="link-btn" onClick={cancelEdit}>
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={saveEdit}
+                            disabled={!editText.trim()}
+                          >
+                            保存
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="work-item-content">{w.content}</div>
+                  )}
                 </div>
               ))}
             </div>

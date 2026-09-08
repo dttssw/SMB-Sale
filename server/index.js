@@ -112,10 +112,6 @@ const pad2 = (n) => String(n).padStart(2, '0');
 function dateKey(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-function todayDateKey() {
-  const now = new Date();
-  return { date: dateKey(now), time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}` };
-}
 // 把 SQLite 返回的 UTC 时间字符串(YYYY-MM-DD HH:MM:SS) 转成本地 Date
 function localDateOfDb(createdAt) {
   return new Date(String(createdAt).replace(' ', 'T') + 'Z');
@@ -271,6 +267,18 @@ app.delete('/api/materials/:id', (req, res, next) => {
 // ---- 客户备注（时间线）路由 ----
 const NOTE_TYPES = ['contract', 'prospect', 'partner'];
 
+// 清理超过 1 个月的旧备注（自动删除；SQLite datetime('now') 为 UTC，与 createdAt 一致）
+function purgeOldNotes() {
+  try {
+    const result = db.prepare(`DELETE FROM notes WHERE createdAt < datetime('now', '-1 month')`).run();
+    if (result.changes > 0) console.log(`🧹 已自动清理 ${result.changes} 条超过 1 个月的旧备注`);
+    return result.changes;
+  } catch (err) {
+    console.error('清理旧备注失败：', err.message);
+    return 0;
+  }
+}
+
 // 列表：GET /api/notes?customerType=&customerId=
 app.get('/api/notes', (req, res, next) => {
   const { customerType, customerId } = req.query;
@@ -278,6 +286,7 @@ app.get('/api/notes', (req, res, next) => {
     return res.status(400).json({ error: 'customerType 必须为 contract、prospect 或 partner' });
   }
   if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
+  purgeOldNotes();
   try {
     const rows = db
       .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
@@ -288,10 +297,10 @@ app.get('/api/notes', (req, res, next) => {
   }
 });
 
-// 新增：POST /api/notes（同一本地日期的备注合并到同一条，每次以 [HH:MM] 作为时间标记前缀）
+// 新增：POST /api/notes（每条备注独立成行，不再按天合并；时间取自 createdAt）
 app.post('/api/notes', (req, res, next) => {
   try {
-    const { id, customerType, customerId, content, raw } = req.body || {};
+    const { id, customerType, customerId, content } = req.body || {};
     if (!id) {
       const e = new Error('缺少 id');
       e.status = 400;
@@ -313,48 +322,13 @@ app.post('/api/notes', (req, res, next) => {
       throw e;
     }
     const text = String(content).trim();
-
-    // raw=true：备注迁移专用，原样写入（不合并、不加时间标记）
-    if (raw) {
-      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
-        id,
-        customerType,
-        customerId,
-        text
-      );
-      return res.status(201).json(db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id));
-    }
-
-    const { date, time } = todayDateKey();
-    const marker = `[${time}]`;
-
-    // 找该客户本地日期为今天的最新一条备注，若存在则合并到它（同一天多次备注累积）
-    const existing = db
-      .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
-      .all(customerType, customerId);
-    let todayNote = null;
-    for (const r of existing) {
-      const d = localDateOfDb(r.createdAt);
-      if (!Number.isNaN(d.getTime()) && dateKey(d) === date) {
-        todayNote = r;
-        break;
-      }
-    }
-
-    let saved;
-    if (todayNote) {
-      const merged = `${todayNote.content}\n${marker} ${text}`;
-      db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(merged, todayNote.id);
-      saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(todayNote.id);
-    } else {
-      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
-        id,
-        customerType,
-        customerId,
-        `${marker} ${text}`
-      );
-      saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id);
-    }
+    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
+      id,
+      customerType,
+      customerId,
+      text
+    );
+    const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id);
 
     // 若为跟进客户：用最后一次添加备注的日期作为上次跟进，下次跟进自动设为3天后
     if (customerType === 'prospect') {
@@ -368,6 +342,36 @@ app.post('/api/notes', (req, res, next) => {
       }
     }
     res.status(201).json(saved);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 编辑：PUT /api/notes/:id（仅更新内容，保留原时间）
+app.put('/api/notes/:id', (req, res, next) => {
+  try {
+    const { content } = req.body || {};
+    if (!content || !String(content).trim()) {
+      const e = new Error('备注内容不能为空');
+      e.status = 400;
+      throw e;
+    }
+    const text = String(content).trim();
+    const result = db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(text, req.params.id);
+    if (!result.changes) return res.status(404).json({ error: '备注不存在' });
+    const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(req.params.id);
+    // 若为跟进客户：更新备注后同步重算上次/下次跟进日期
+    if (saved.customerType === 'prospect') {
+      const dates = lastFollowUpDates(saved.customerId);
+      if (dates) {
+        db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
+          dates.lastFollowUp,
+          dates.nextFollowUp,
+          saved.customerId
+        );
+      }
+    }
+    res.json(saved);
   } catch (err) {
     next(err);
   }
@@ -509,6 +513,9 @@ app.use((err, req, res, next) => {
   if (status >= 500) console.error(err);
   res.status(status).json({ error: message });
 });
+
+// 启动时清理一次超过 1 个月的旧备注
+purgeOldNotes();
 
 app.listen(PORT, () => {
   console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${PORT}`);

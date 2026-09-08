@@ -28,7 +28,7 @@ function Actions({ onCancel }) {
   );
 }
 
-export function ContractForm({ initial, onSave, onCancel, notesText }) {
+export function ContractForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -37,7 +37,6 @@ export function ContractForm({ initial, onSave, onCancel, notesText }) {
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
     expiryDate: initial?.expiryDate || oneYearFrom(todayStr()),
-    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -86,20 +85,13 @@ export function ContractForm({ initial, onSave, onCancel, notesText }) {
       <Field label="订阅到期时间" required full>
         <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
       </Field>
-      <Field label="备注" full>
-        <textarea
-          value={form.note}
-          onChange={set('note')}
-          placeholder="客户情况、沟通记录等（保存后追加为该客户的备注时间线）"
-        />
-      </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
 }
 
-export function ProspectForm({ initial, onSave, onCancel, notesText }) {
+export function ProspectForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -108,7 +100,6 @@ export function ProspectForm({ initial, onSave, onCancel, notesText }) {
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
-    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -146,20 +137,13 @@ export function ProspectForm({ initial, onSave, onCancel, notesText }) {
       <Field label="下次跟进日期" full>
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
-      <Field label="备注" full>
-        <textarea
-          value={form.note}
-          onChange={set('note')}
-          placeholder="客户情况、商机来源、客户诉求等（保存后追加为该客户的备注时间线）"
-        />
-      </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
 }
 
-export function RenewForm({ initial, onSave, onCancel, notesText }) {
+export function RenewForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -168,7 +152,6 @@ export function RenewForm({ initial, onSave, onCancel, notesText }) {
     expiryDate: initial?.expiryDate || todayStr(),
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
-    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -201,25 +184,17 @@ export function RenewForm({ initial, onSave, onCancel, notesText }) {
       <Field label="下次跟进日期">
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
-      <Field label="备注" full>
-        <textarea
-          value={form.note}
-          onChange={set('note')}
-          placeholder="续约沟通记录等（保存后追加为该客户的备注时间线）"
-        />
-      </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
 }
 
-export function PartnerForm({ initial, onSave, onCancel, notesText }) {
+export function PartnerForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
     contact: initial?.contact || '',
-    note: notesText !== undefined ? notesText : initial?.note || '',
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -237,13 +212,6 @@ export function PartnerForm({ initial, onSave, onCancel, notesText }) {
       </Field>
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：王经理" />
-      </Field>
-      <Field label="备注" full>
-        <textarea
-          value={form.note}
-          onChange={set('note')}
-          placeholder="合作情况、对接记录等（保存后追加为该合作伙伴的备注时间线）"
-        />
       </Field>
       {error && <div className="form-error">⚠️ {error}</div>}
       <Actions onCancel={onCancel} />

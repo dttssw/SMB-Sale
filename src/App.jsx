@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { api } from './api.js';
-import { daysUntil, formatCnDate, formatDate, formatNoteTime, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
+import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { sumBy } from './utils/format.js';
 import { PRODUCTS } from './data/constants.js';
 import Header from './components/Header.jsx';
@@ -121,16 +121,12 @@ export default function App() {
 
   const saveContract = async (data) => {
     try {
-      const { note, ...record } = data;
       let savedId = data.id;
-      if (data.id) await contractsDb.update(record);
+      if (data.id) await contractsDb.update(data);
       else {
-        const saved = await contractsDb.create({ ...record, id: uid() });
+        const saved = await contractsDb.create({ ...data, id: uid() });
         savedId = saved.id;
       }
-      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）；仅在备注相对打开时有改动时才追加，避免重复
-      if (note && note !== (modal?.initialNote || ''))
-        await api.createNote({ id: uid(), customerType: 'contract', customerId: savedId, content: note });
       await runSync();
       setActionError('');
       setModal(null);
@@ -141,17 +137,13 @@ export default function App() {
 
   const saveProspect = async (data) => {
     try {
-      const { note, ...record } = data;
       let savedId = data.id;
-      if (data.id) await prospectsDb.update(record);
+      if (data.id) await prospectsDb.update(data);
       else {
         // 新跟进客户默认归入 New（Renew 由到期<45天的在约客户自动生成）
-        const saved = await prospectsDb.create({ ...record, category: 'new', id: uid() });
+        const saved = await prospectsDb.create({ ...data, category: 'new', id: uid() });
         savedId = saved.id;
       }
-      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）；仅在备注相对打开时有改动时才追加，避免重复
-      if (note && note !== (modal?.initialNote || ''))
-        await api.createNote({ id: uid(), customerType: 'prospect', customerId: savedId, content: note });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -162,12 +154,11 @@ export default function App() {
   // 新建 / 编辑 Renew 续约跟进客户（手动创建，不关联在约客户）
   const saveRenew = async (data) => {
     try {
-      const { note, ...record } = data;
       let savedId = data.id;
-      if (data.id) await prospectsDb.update(record);
+      if (data.id) await prospectsDb.update(data);
       else {
         const saved = await prospectsDb.create({
-          ...record,
+          ...data,
           stage: 'negotiation',
           category: 'renew',
           contractId: '',
@@ -175,9 +166,6 @@ export default function App() {
         });
         savedId = saved.id;
       }
-      // 表单里填写的备注 → 追加到客户备注时间线（不写入客户表）；仅在备注相对打开时有改动时才追加，避免重复
-      if (note && note !== (modal?.initialNote || ''))
-        await api.createNote({ id: uid(), customerType: 'prospect', customerId: savedId, content: note });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -198,16 +186,12 @@ export default function App() {
   // 新建 / 编辑合作伙伴（不含金额、跟进时间、订阅签约字段）
   const savePartner = async (data) => {
     try {
-      const { note, ...record } = data;
       let savedId = data.id;
-      if (data.id) await partnersDb.update(record);
+      if (data.id) await partnersDb.update(data);
       else {
-        const saved = await partnersDb.create({ ...record, id: uid() });
+        const saved = await partnersDb.create({ ...data, id: uid() });
         savedId = saved.id;
       }
-      // 表单里填写的备注 → 追加到合作伙伴的备注时间线（不写入表）；仅在备注相对打开时有改动时才追加，避免重复
-      if (note && note !== (modal?.initialNote || ''))
-        await api.createNote({ id: uid(), customerType: 'partner', customerId: savedId, content: note });
       setActionError('');
       setModal(null);
     } catch (err) {
@@ -218,20 +202,16 @@ export default function App() {
   // 跟进中的客户 → 转为在约客户：先创建在约客户，成功后从跟进列表中移除
   const convertToContract = async (prospect, data) => {
     try {
-      const { note, ...record } = data;
-      const saved = await contractsDb.create({ ...record, id: uid() });
+      const saved = await contractsDb.create({ ...data, id: uid() });
       // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交；续约（Renew）不记录金额
       if (prospect.category !== 'renew') {
         await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
       }
-      // 把跟进客户的备注时间线迁移到新在约客户（raw=true 原样迁移，避免叠加时间标记或触发当日合并）
+      // 把跟进客户的备注时间线迁移到新在约客户（每条独立成行）
       const prospNotes = await api.listNotes('prospect', prospect.id);
       for (const n of prospNotes) {
-        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content, raw: true });
+        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: n.content });
       }
-      // 转在约表单里填写的备注（相对跟进客户时间线有改动时才追加，避免重复迁移后的内容）
-      if (note && note !== (modal?.initialNote || ''))
-        await api.createNote({ id: uid(), customerType: 'contract', customerId: saved.id, content: note });
       await prospectsDb.remove(prospect.id);
       await runSync();
       setActionError('');
@@ -295,14 +275,8 @@ export default function App() {
     }
   };
 
-  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人；订阅默认一年），并加载其备注时间线
-  const convertProspect = async (p) => {
-    let initialNote = '';
-    try {
-      initialNote = notesToText(await api.listNotes('prospect', p.id));
-    } catch {
-      /* 忽略加载失败，备注框回退为空 */
-    }
+  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人；订阅默认一年）
+  const convertProspect = (p) => {
     setModal({
       kind: 'convert',
       data: p,
@@ -314,7 +288,6 @@ export default function App() {
         startDate: todayStr(),
         expiryDate: oneYearFrom(todayStr()),
       },
-      initialNote,
     });
   };
 
@@ -322,19 +295,10 @@ export default function App() {
   const openDetail = (customerType) => (customer) =>
     setModal({ kind: 'detail', customerType, customer });
 
-  // 把某客户备注时间线拼成带时间的文本，供编辑表单的备注框显示（与详情弹窗里看到的备注一致）
-  const notesToText = (rows) => rows.map((n) => `${formatNoteTime(n.createdAt)} ${n.content}`).join('\n');
-
-  // 打开编辑弹窗：先加载该客户的备注时间线作为备注框初始内容，避免“编辑界面备注”与“详情添加的备注”不一致
-  const openEditModal = async (customerType, customer) => {
-    let initialNote = '';
-    try {
-      initialNote = notesToText(await api.listNotes(customerType, customer.id));
-    } catch {
-      /* 忽略加载失败，备注框回退为空 */
-    }
+  // 打开编辑弹窗：备注已改为每条独立成行、在详情中逐条管理，这里直接打开编辑表单即可
+  const openEditModal = (customerType, customer) => {
     const kind = customerType === 'prospect' && customer.category === 'renew' ? 'renew' : customerType;
-    setModal({ kind, data: customer, initialNote });
+    setModal({ kind, data: customer });
   };
 
   const uploadMaterials = async (files, note) => {
@@ -368,6 +332,15 @@ export default function App() {
     if (!window.confirm('确认删除该条工作记录？')) return;
     try {
       await worklogsDb.remove(id);
+      setActionError('');
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const updateWorklog = async (id, content) => {
+    try {
+      await worklogsDb.update({ id, content });
       setActionError('');
     } catch (err) {
       setActionError(err.message);
@@ -449,7 +422,7 @@ export default function App() {
       );
       break;
     case 'journal':
-      content = <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} />;
+      content = <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} onEdit={updateWorklog} />;
       break;
     case 'follow':
       content = (
@@ -511,7 +484,6 @@ export default function App() {
             <ContractForm
               key={modal.data?.id || 'new'}
               initial={modal.data}
-              notesText={modal.initialNote}
               onSave={saveContract}
               onCancel={() => setModal(null)}
             />
@@ -520,7 +492,6 @@ export default function App() {
             <ContractForm
               key={`convert-${modal.data.id}`}
               initial={modal.initial}
-              notesText={modal.initialNote}
               onSave={(data) => convertToContract(modal.data, data)}
               onCancel={() => setModal(null)}
             />
@@ -529,7 +500,6 @@ export default function App() {
             <ProspectForm
               key={modal.data?.id || 'new'}
               initial={modal.data}
-              notesText={modal.initialNote}
               onSave={saveProspect}
               onCancel={() => setModal(null)}
             />
@@ -538,7 +508,6 @@ export default function App() {
             <RenewForm
               key={modal.data?.id || 'new'}
               initial={modal.data}
-              notesText={modal.initialNote}
               onSave={saveRenew}
               onCancel={() => setModal(null)}
             />
@@ -547,7 +516,6 @@ export default function App() {
             <PartnerForm
               key={modal.data?.id || 'new'}
               initial={modal.data}
-              notesText={modal.initialNote}
               onSave={savePartner}
               onCancel={() => setModal(null)}
             />
