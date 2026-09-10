@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
 import { formatCnDate, formatNoteTime, isInCurrentWeek, todayStr } from '../utils/date.js';
 
 // 按天分组标题：今天 / 昨天 / 具体日期（含星期）
@@ -23,6 +24,9 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
   const todayCount = entries.filter((w) => w.date === today).length;
   const hiddenCount = entries.length - weekEntries.length;
   const displayEntries = view === 'all' ? entries : weekEntries;
+  // 按窗口高度自适应：记录列表的高度跟着窗口大小走
+  const viewport = useViewport();
+  const { panelRef, scrollRef, maxHeight } = useFitScroll(viewport.height, [displayEntries.length, view]);
 
   const add = (e) => {
     e.preventDefault();
@@ -62,7 +66,7 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
   }));
 
   return (
-    <section className="panel panel-journal">
+    <section className="panel panel-journal" ref={panelRef}>
       <div className="panel-head">
         <div>
           <h2>📝 今日工作记录</h2>
@@ -104,7 +108,11 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
               : '还没有任何工作记录，写下一笔开始吧 ✍️'}
         </div>
       ) : (
-        <div className="work-list">
+        <div
+          className="work-list fit-scroll"
+          ref={scrollRef}
+          style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+        >
           {groups.map((g) => (
             <div key={g.date} className="work-day">
               <div className="work-day-head">
