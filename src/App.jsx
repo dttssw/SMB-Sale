@@ -28,6 +28,12 @@ const modalTitle = (m) => {
   return '记录成交金额';
 };
 
+// 客户跟进板块的展示尺寸：双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
+const FOLLOW_LAYOUTS = [
+  { key: 'split', label: '双栏', title: 'New / Renew 并排显示' },
+  { key: 'wide', label: '单栏全宽', title: '每个跟进板块占满整宽，客户看得更多' },
+];
+
 // 左侧导航板块
 const SECTIONS = [
   { key: 'home', label: '总览', icon: '🏠', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
@@ -49,6 +55,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
   const [nav, setNav] = useState('home');
+  const [followLayout, setFollowLayout] = useState('split');
 
   const active = SECTIONS.find((s) => s.key === nav) || SECTIONS[0];
 
@@ -430,17 +437,35 @@ export default function App() {
                 New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
               </p>
             </div>
+            <div className="workspace-tools">
+              <span className="workspace-tools-label">板块尺寸</span>
+              <div className="seg-toggle" role="group" aria-label="客户跟进板块尺寸">
+                {FOLLOW_LAYOUTS.map((l) => (
+                  <button
+                    key={l.key}
+                    type="button"
+                    className={followLayout === l.key ? 'active' : ''}
+                    title={l.title}
+                    onClick={() => setFollowLayout(l.key)}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-          <div className="workspace-grid">
+          <div className={`workspace-grid${followLayout === 'wide' ? ' grid-wide' : ''}`}>
             <ProspectList
               prospects={prospects}
               variant="new"
+              wide={followLayout === 'wide'}
               onAdd={() => setModal({ kind: 'prospect' })}
               onView={openDetail('prospect')}
             />
             <ProspectList
               prospects={prospects}
               variant="renew"
+              wide={followLayout === 'wide'}
               onAdd={() => setModal({ kind: 'renew' })}
               onView={openDetail('prospect')}
             />
