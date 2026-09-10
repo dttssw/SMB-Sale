@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
+import { useViewport } from './hooks/useViewportFit.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { sumBy } from './utils/format.js';
@@ -28,11 +29,16 @@ const modalTitle = (m) => {
   return '记录成交金额';
 };
 
-// 客户跟进板块的展示尺寸：双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
+// 客户跟进板块的展示尺寸：自动（按窗口宽度选）/ 双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
 const FOLLOW_LAYOUTS = [
+  { key: 'auto', label: '自动', title: '按窗口宽度自动切换：宽屏双栏并排，窄屏单栏全宽' },
   { key: 'split', label: '双栏', title: 'New / Renew 并排显示' },
   { key: 'wide', label: '单栏全宽', title: '每个跟进板块占满整宽，客户看得更多' },
 ];
+
+// 自动布局的判定宽度：≥ 该宽度并排看两块（总量更大且页面不滚动），否则单栏全宽（每块更舒展）
+// 1280 及以上的窗口，双栏每块仍 ≥470px，表格不会横向溢出，一屏可见客户数也更多
+const AUTO_SPLIT_MIN_WIDTH = 1280;
 
 // 左侧导航板块
 const SECTIONS = [
@@ -55,9 +61,14 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [actionError, setActionError] = useState('');
   const [nav, setNav] = useState('home');
-  const [followLayout, setFollowLayout] = useState('split');
+  const [followLayout, setFollowLayout] = useState('auto');
+  // 自动检测窗口尺寸：宽高都会实时影响板块大小（见 useViewportFit）
+  const viewport = useViewport();
 
   const active = SECTIONS.find((s) => s.key === nav) || SECTIONS[0];
+  // 「自动」按窗口宽度决定并排还是单栏全宽：宽屏并排总量更大，窄屏单栏每块更舒展
+  const layoutMode =
+    followLayout === 'auto' ? (viewport.width >= AUTO_SPLIT_MIN_WIDTH ? 'split' : 'wide') : followLayout;
 
   const loading =
     contractsDb.loading ||
@@ -438,6 +449,9 @@ export default function App() {
               </p>
             </div>
             <div className="workspace-tools">
+              <span className="workspace-tools-hint" title="当前窗口尺寸，板块会自动按它调整大小">
+                窗口 {viewport.width}×{viewport.height}
+              </span>
               <span className="workspace-tools-label">板块尺寸</span>
               <div className="seg-toggle" role="group" aria-label="客户跟进板块尺寸">
                 {FOLLOW_LAYOUTS.map((l) => (
@@ -454,18 +468,18 @@ export default function App() {
               </div>
             </div>
           </div>
-          <div className={`workspace-grid${followLayout === 'wide' ? ' grid-wide' : ''}`}>
+          <div className={`workspace-grid${layoutMode === 'wide' ? ' grid-wide' : ''}`}>
             <ProspectList
               prospects={prospects}
               variant="new"
-              wide={followLayout === 'wide'}
+              wide={layoutMode === 'wide'}
               onAdd={() => setModal({ kind: 'prospect' })}
               onView={openDetail('prospect')}
             />
             <ProspectList
               prospects={prospects}
               variant="renew"
-              wide={followLayout === 'wide'}
+              wide={layoutMode === 'wide'}
               onAdd={() => setModal({ kind: 'renew' })}
               onView={openDetail('prospect')}
             />

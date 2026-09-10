@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import Pagination from './Pagination.jsx';
+import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
 
-const PER_PAGE = 5;
+const PER_PAGE = 5; // 兜底：自动测量完成前的每页条数
 
 export default function PartnerList({ partners, onAdd, onView }) {
   const [page, setPage] = useState(1);
+  // 按窗口高度自适应：卡片高度、每页条数都跟着窗口大小走
+  const viewport = useViewport();
   const sorted = [...partners].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-  const pages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
+  const { panelRef, scrollRef, maxHeight, rows } = useFitScroll(viewport.height, [sorted.length]);
+  const perPage = rows > 0 ? rows : PER_PAGE;
+  const pages = Math.max(1, Math.ceil(sorted.length / perPage));
   const cur = Math.min(page, pages);
-  const paged = sorted.slice((cur - 1) * PER_PAGE, cur * PER_PAGE);
+  const paged = sorted.slice((cur - 1) * perPage, cur * perPage);
 
   return (
-    <section className="panel">
+    <section className="panel" ref={panelRef}>
       <div className="panel-head">
         <div>
           <h2>🤝 合作伙伴</h2>
@@ -21,7 +26,11 @@ export default function PartnerList({ partners, onAdd, onView }) {
           ＋ 新建合作伙伴
         </button>
       </div>
-      <div className="table-wrap">
+      <div
+        className="table-wrap fit-scroll"
+        ref={scrollRef}
+        style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+      >
         <table className="table">
           <thead>
             <tr>
@@ -56,7 +65,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
           </tbody>
         </table>
       </div>
-      <Pagination page={cur} total={sorted.length} perPage={PER_PAGE} onChange={setPage} />
+      <Pagination page={cur} total={sorted.length} perPage={perPage} onChange={setPage} />
     </section>
   );
 }

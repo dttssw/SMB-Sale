@@ -1,18 +1,23 @@
 import { useState } from 'react';
 import Badge from './Badge.jsx';
 import Pagination from './Pagination.jsx';
+import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
 import { stageOf } from '../data/constants.js';
 import { daysUntil, formatDate, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 
-// 每页条数（0 = 全部）：客户跟进是主体工作区，默认容量比原先固定的 5 条更大，一屏能看到更多客户
+// 每页条数（-1 = 自动：按窗口大小算出一屏能放几行；0 = 全部平铺）
+// 客户跟进是主体工作区，默认「自动」——窗口越大，一屏自动放下越多客户
+const AUTO_PER_PAGE = -1;
 const PAGE_SIZES = [
+  { value: AUTO_PER_PAGE, label: '自动' },
   { value: 8, label: '8 条' },
   { value: 15, label: '15 条' },
   { value: 0, label: '全部' },
 ];
+const FALLBACK_ROWS = 8; // 首次测量完成前的占位行数
 
-function ProspectTable({ items, isRenew, perPage, wide, onView }) {
+function ProspectTable({ items, isRenew, perPage, wide, onView, scrollRef, maxHeight }) {
   const [page, setPage] = useState(1);
   const sorted = [...items].sort((a, b) =>
     (a.nextFollowUp || '9999-12-31').localeCompare(b.nextFollowUp || '9999-12-31')
@@ -28,7 +33,11 @@ function ProspectTable({ items, isRenew, perPage, wide, onView }) {
 
   return (
     <>
-      <div className="table-wrap follow-table-wrap">
+      <div
+        className="table-wrap follow-table-wrap fit-scroll"
+        ref={scrollRef}
+        style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+      >
         <table className="table">
           <thead>
             <tr>
@@ -118,17 +127,31 @@ const VARIANTS = {
 };
 
 export default function ProspectList({ prospects, variant, onAdd, onView, wide = false }) {
-  // dense：紧凑模式（行距更小，一屏看到更多客户）；perPage：0 表示不翻页，全部平铺在可滚动区域内
+  // dense：紧凑模式（行距更小，一屏看到更多客户）；perPage：自动 / 指定条数 / 0 表示不翻页
   const [dense, setDense] = useState(true);
-  const [perPage, setPerPage] = useState(8);
+  const [perPage, setPerPage] = useState(AUTO_PER_PAGE);
+  const viewport = useViewport();
   const today = todayStr();
   const v = VARIANTS[variant] || VARIANTS.new;
   const items = prospects.filter((p) => (v.isRenew ? p.category === 'renew' : p.category !== 'renew'));
+  // 窗口高度、数据条数、密度、栏位（单/双栏）、每页条数变化时重算可用高度与行数
+  const { panelRef, scrollRef, maxHeight, rows } = useFitScroll(viewport.height, [
+    items.length,
+    dense,
+    wide,
+    perPage,
+  ]);
   const overdue = items.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
   const dueToday = items.filter((p) => p.nextFollowUp === today).length;
+  // 自动分页：按窗口高度测出的一屏行数（测量完成前先用兜底值，避免首屏抖动）
+  const autoRows = rows > 0 ? rows : FALLBACK_ROWS;
+  const effectivePerPage = perPage === AUTO_PER_PAGE ? autoRows : perPage;
 
   return (
-    <section className={`follow-panel follow-${variant === 'renew' ? 'renew' : 'new'}${dense ? ' is-dense' : ''}`}>
+    <section
+      ref={panelRef}
+      className={`follow-panel follow-${variant === 'renew' ? 'renew' : 'new'}${dense ? ' is-dense' : ''}`}
+    >
       <header className="follow-head">
         <div className="follow-head-main">
           <div className="follow-title">
@@ -156,7 +179,7 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
               舒适
             </button>
           </div>
-          <label className="follow-pagesize" title="每页显示多少条客户">
+          <label className="follow-pagesize" title="每页显示多少条客户：自动 = 按窗口大小铺满一屏">
             <span>每页</span>
             <select value={perPage} onChange={(e) => setPerPage(Number(e.target.value))}>
               {PAGE_SIZES.map((s) => (
@@ -165,6 +188,7 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
                 </option>
               ))}
             </select>
+            {perPage === AUTO_PER_PAGE && <span className="follow-pagesize-auto">自适应 {autoRows} 条</span>}
           </label>
           <button className="btn btn-primary btn-sm" onClick={onAdd}>
             {v.addLabel}
@@ -178,7 +202,15 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
           <span className="pill pill-info">今日需跟进 {dueToday}</span>
         </div>
       </div>
-      <ProspectTable items={items} isRenew={v.isRenew} perPage={perPage} wide={wide} onView={onView} />
+      <ProspectTable
+        items={items}
+        isRenew={v.isRenew}
+        perPage={effectivePerPage}
+        wide={wide}
+        onView={onView}
+        scrollRef={scrollRef}
+        maxHeight={maxHeight}
+      />
     </section>
   );
 }
