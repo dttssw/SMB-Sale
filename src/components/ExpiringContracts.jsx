@@ -1,11 +1,12 @@
-import { useState } from 'react';
 import Badge from './Badge.jsx';
+import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
-import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
+import useFitPaging from '../hooks/useFitPaging.js';
+import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 
-const PER_PAGE = 5; // 兜底：自动测量完成前的每页条数
+const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
 function statusOf(expiryDate) {
   const d = daysUntil(expiryDate);
@@ -17,28 +18,43 @@ function statusOf(expiryDate) {
 }
 
 export default function ExpiringContracts({ contracts, onView }) {
-  const [page, setPage] = useState(1);
-  // 按窗口高度自适应：卡片高度、每页条数都跟着窗口大小走
   const viewport = useViewport();
   const sorted = [...contracts].sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
-  const { panelRef, scrollRef, maxHeight, rows } = useFitScroll(viewport.height, [sorted.length]);
-  const perPage = rows > 0 ? rows : PER_PAGE;
-
-  const pages = Math.max(1, Math.ceil(sorted.length / perPage));
-  const cur = Math.min(page, pages);
-  const paged = sorted.slice((cur - 1) * perPage, cur * perPage);
+  // 与客户跟进同一套逻辑：默认「舒适」布局；每页「自动」= 按当前窗口能完整显示的最多行数
+  const {
+    panelRef,
+    scrollRef,
+    maxHeight,
+    dense,
+    setDense,
+    perPage,
+    setPerPage,
+    autoRows,
+    pageSize,
+    page,
+    setPage,
+    slicePage,
+  } = useFitPaging({ count: sorted.length, viewportHeight: viewport.height, fallbackRows: FALLBACK_ROWS });
+  const paged = slicePage(sorted);
   const stableCount = sorted.filter((c) => {
     const d = daysUntil(c.expiryDate);
     return d == null || d > 45;
   }).length;
 
   return (
-    <section className="panel" ref={panelRef}>
+    <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
         <div>
           <h2>📋 在约客户</h2>
           <p className="panel-desc">在约订阅的参考清单；临期客户已在上方单独提醒，此处稳定客户无需额外操心</p>
         </div>
+        <ListTools
+          dense={dense}
+          onDenseChange={setDense}
+          perPage={perPage}
+          onPerPageChange={setPerPage}
+          autoRows={autoRows}
+        />
       </div>
       <div className="stat-pills">
         <span className="pill pill-info">在约 {sorted.length} 家</span>
@@ -97,7 +113,7 @@ export default function ExpiringContracts({ contracts, onView }) {
           </tbody>
         </table>
       </div>
-      <Pagination page={cur} total={sorted.length} perPage={perPage} onChange={setPage} />
+      <Pagination page={page} total={sorted.length} perPage={pageSize} onChange={setPage} />
     </section>
   );
 }

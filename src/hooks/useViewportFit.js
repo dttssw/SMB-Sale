@@ -90,6 +90,8 @@ export default function useFitScroll(viewportHeight, deps = []) {
       const headH = head ? head.getBoundingClientRect().height : 0;
       let rowH = 0;
       scroll.querySelectorAll('tbody tr').forEach((tr) => {
+        // 只按真实数据行测量：占位行（暂无数据）不参与，避免空列表时把一屏条数算得过小
+        if (tr.querySelector('td.empty')) return;
         rowH = Math.max(rowH, tr.getBoundingClientRect().height);
       });
       const rows = rowH > 0 ? Math.max(MIN_ROWS, Math.floor((height - headH - ROW_SLACK) / rowH)) : 0;
