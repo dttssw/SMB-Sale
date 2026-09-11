@@ -82,6 +82,8 @@ body {
 .panel { background: var(--card); border: 1px solid var(--border-soft); border-radius: var(--radius); backdrop-filter: blur(10px); box-shadow: var(--shadow); padding: 20px; transition: border-color .2s; }
 .panel:hover { border-color: rgba(124,140,248,.32); }
 .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+/* 板块标题右侧的操作区（列表工具栏 + 主按钮） */
+.panel-head-ops { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .panel-head h2 { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 9px; }
 .panel-head h2::after { content: ''; width: 34px; height: 3px; border-radius: 3px; background: linear-gradient(90deg,var(--primary),var(--violet)); }
 .panel-desc { font-size: 12px; color: var(--muted); margin-top: 4px; }
@@ -94,6 +96,8 @@ body {
 .workspace-head .panel-desc { font-size: 13px; color: var(--muted); margin-top: 6px; }
 .workspace-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .workspace-tools-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+/* 自动检测到的窗口尺寸：让「板块会随窗口大小自适应」可见 */
+.workspace-tools-hint { font-size: 11.5px; color: var(--muted); background: rgba(148,163,184,.08); border: 1px solid var(--border-soft); border-radius: 999px; padding: 3px 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* 双栏（New / Renew 并排）↔ 单栏全宽（跟进板块拉大，一屏看更多客户） */
 .workspace-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; align-items: start; }
 .workspace-grid.grid-wide { grid-template-columns: minmax(0,1fr); --follow-table-max: max(340px, calc(100vh - 370px)); }
@@ -118,19 +122,25 @@ body {
 .follow-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .follow-desc { font-size: 12px; color: var(--muted); margin: 0; }
 .follow-meta .stat-pills { margin: 0; }
-.follow-pagesize { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
-.follow-pagesize select { border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px; font-size: 12px; font-family: inherit; background: #0f1729; color: var(--text); outline: none; cursor: pointer; }
-.follow-pagesize select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-.follow-panel .follow-table-wrap { max-height: var(--follow-table-max); overflow: auto; }
+/* 列表工具栏（密度 + 每页条数）：客户跟进 / 在约客户 / 合作伙伴 共用 */
+.list-tools { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.list-pagesize { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.list-pagesize select { border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px; font-size: 12px; font-family: inherit; background: #0f1729; color: var(--text); outline: none; cursor: pointer; }
+.list-pagesize select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+/* 自动分页：提示当前窗口一屏能完整放下多少条 */
+.list-pagesize-auto { font-size: 11.5px; color: #a5b4fc; background: var(--primary-soft); border-radius: 999px; padding: 2px 9px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* 卡片内的列表高度由 JS 按窗口高度写入 --fit-max；未测量前用 --follow-table-max 兜底 */
+.follow-panel .follow-table-wrap { max-height: var(--fit-max, var(--follow-table-max)); overflow: auto; }
 /* 表头吸顶：表格内部滚动时仍能看到列名 */
 .follow-panel .follow-table-wrap thead th { position: sticky; top: 0; z-index: 2; background: var(--card-solid); box-shadow: inset 0 -1px 0 var(--border); }
 .follow-panel .table th { padding: 10px 11px; }
 .follow-panel .table td { padding: 12px 11px; }
-/* 紧凑模式：一屏放进更多客户（同时收窄左右留白，双栏窄面板下也尽量不出现横向滚动） */
-.follow-panel.is-dense .table { font-size: 12.5px; }
-.follow-panel.is-dense .table th { padding: 7px 9px; }
-.follow-panel.is-dense .table td { padding: 7px 9px; }
-.follow-panel.is-dense .cell-sub { font-size: 11.5px; margin-top: 0; }
+/* 紧凑模式：一屏放进更多行（客户跟进 / 在约客户 / 合作伙伴 通用）；
+   默认「舒适」沿用各面板自身的行距，不做收窄 */
+.follow-panel.is-dense .table, .panel.is-dense .table { font-size: 12.5px; }
+.follow-panel.is-dense .table th, .panel.is-dense .table th { padding: 7px 9px; }
+.follow-panel.is-dense .table td, .panel.is-dense .table td { padding: 7px 9px; }
+.follow-panel.is-dense .cell-sub, .panel.is-dense .cell-sub { font-size: 11.5px; margin-top: 0; }
 /* 窄屏（≤1400px）双栏时进一步收窄卡片与单元格留白，让舒适模式也不出现横向滚动 */
 @media (max-width: 1400px) {
   .follow-panel { padding: 18px 14px; }
@@ -179,6 +189,11 @@ body {
 .badge-info { background: var(--info-soft); color: #7dd3fc; }
 .badge-primary { background: var(--primary-soft); color: #a5b4fc; }
 .badge-violet { background: var(--violet-soft); color: #c4b5fd; }
+
+/* 自适应高度：JS 会按窗口大小把算好的高度写进 --fit-max，未测量前用 CSS 变量兜底；
+   表格内部滚动时表头吸顶。scrollbar-gutter 固定占位，避免滚动条出现/消失导致列宽抖动。 */
+.fit-scroll { max-height: var(--fit-max, var(--follow-table-max, none)); overflow: auto; scrollbar-gutter: stable; }
+.fit-scroll thead th { position: sticky; top: 0; z-index: 2; background: var(--card-solid); box-shadow: inset 0 -1px 0 var(--border); }
 
 /* Buttons */
 .btn { border: none; cursor: pointer; font-size: 13px; font-weight: 700; border-radius: 9px; padding: 8px 14px; transition: .18s; }
@@ -344,7 +359,7 @@ body {
 .work-add textarea { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; font-family: inherit; background: #0f1729; color: var(--text); resize: vertical; min-height: 72px; outline: none; width: 100%; }
 .work-add textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
 .work-add-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.work-list { display: flex; flex-direction: column; gap: 16px; max-height: 420px; overflow-y: auto; padding-right: 2px; }
+.work-list { display: flex; flex-direction: column; gap: 16px; max-height: var(--fit-max, 420px); overflow-y: auto; padding-right: 2px; }
 .work-day { display: flex; flex-direction: column; gap: 8px; }
 .work-day-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--primary); letter-spacing: .2px; padding-bottom: 4px; border-bottom: 1px dashed var(--border); }
 .work-day-count { color: var(--muted); font-weight: 500; font-size: 11px; }
@@ -366,7 +381,7 @@ body {
 /* ===== 左侧导航 + 主内容区布局 ===== */
 .app-shell { display: grid; grid-template-columns: 264px minmax(0,1fr); min-height: 100vh; }
 .app-main { display: flex; flex-direction: column; min-width: 0; }
-.app-content { padding: 22px 26px 40px; width: 100%; max-width: 1500px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.app-content { padding: 22px 26px 40px; width: 100%; max-width: 2400px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
 
 /* Sidebar */
 .sidebar {

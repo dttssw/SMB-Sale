@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
 import { formatDate, monthOf, todayStr } from '../utils/date.js';
 import { formatMoney, sumBy } from '../utils/format.js';
 
@@ -11,9 +12,12 @@ export default function RevenuePanel({ deals, onAdd }) {
     const recent = [...newDeals].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
     return { totalNew, monthNew, newCount: newDeals.length, recent };
   }, [deals]);
+  // 按窗口高度自适应：成交明细的高度跟着窗口大小走
+  const viewport = useViewport();
+  const { panelRef, scrollRef, maxHeight } = useFitScroll(viewport.height, [recent.length]);
 
   return (
-    <section className="panel">
+    <section className="panel" ref={panelRef}>
       <div className="panel-head">
         <div>
           <h2>💰 成交金额</h2>
@@ -36,7 +40,11 @@ export default function RevenuePanel({ deals, onAdd }) {
         </div>
       </div>
 
-      <div className="table-wrap">
+      <div
+        className="table-wrap fit-scroll"
+        ref={scrollRef}
+        style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+      >
         <table className="table">
           <thead>
             <tr>

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
 
 // 常见文件类型的展示图标
 const FILE_ICONS = {
@@ -53,6 +54,9 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null); // { name, url }
+  // 按窗口高度自适应：材料清单的高度跟着窗口大小走
+  const viewport = useViewport();
+  const { panelRef, scrollRef, maxHeight } = useFitScroll(viewport.height, [materials.length, files.length]);
 
   const chooseFiles = (e) => {
     const list = Array.from(e.target.files || []);
@@ -93,7 +97,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
 
   return (
     <>
-      <section className="panel">
+      <section className="panel" ref={panelRef}>
         <div className="panel-head">
         <div>
           <h2>📁 材料库</h2>
@@ -157,7 +161,11 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
         </div>
       )}
 
-      <div className="table-wrap">
+      <div
+        className="table-wrap fit-scroll"
+        ref={scrollRef}
+        style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+      >
         <table className="table">
           <thead>
             <tr>
