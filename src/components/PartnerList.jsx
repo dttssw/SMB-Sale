@@ -1,27 +1,55 @@
-import { useState } from 'react';
+import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
+import useFitPaging from '../hooks/useFitPaging.js';
+import { useViewport } from '../hooks/useViewportFit.js';
 
-const PER_PAGE = 5;
+const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
 export default function PartnerList({ partners, onAdd, onView }) {
-  const [page, setPage] = useState(1);
+  const viewport = useViewport();
   const sorted = [...partners].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-  const pages = Math.max(1, Math.ceil(sorted.length / PER_PAGE));
-  const cur = Math.min(page, pages);
-  const paged = sorted.slice((cur - 1) * PER_PAGE, cur * PER_PAGE);
+  // 与客户跟进 / 在约客户同一套逻辑：默认「舒适」布局；每页「自动」= 按当前窗口能完整显示的最多行数
+  const {
+    panelRef,
+    scrollRef,
+    maxHeight,
+    dense,
+    setDense,
+    perPage,
+    setPerPage,
+    autoRows,
+    pageSize,
+    page,
+    setPage,
+    slicePage,
+  } = useFitPaging({ count: sorted.length, viewportHeight: viewport.height, fallbackRows: FALLBACK_ROWS });
+  const paged = slicePage(sorted);
 
   return (
-    <section className="panel">
+    <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
         <div>
           <h2>🤝 合作伙伴</h2>
           <p className="panel-desc">登记合作伙伴，可随时为其提交备注记录（不占用签约 / 金额跟进）</p>
         </div>
-        <button className="btn btn-primary" onClick={onAdd}>
-          ＋ 新建合作伙伴
-        </button>
+        <div className="panel-head-ops">
+          <ListTools
+            dense={dense}
+            onDenseChange={setDense}
+            perPage={perPage}
+            onPerPageChange={setPerPage}
+            autoRows={autoRows}
+          />
+          <button className="btn btn-primary" onClick={onAdd}>
+            ＋ 新建合作伙伴
+          </button>
+        </div>
       </div>
-      <div className="table-wrap">
+      <div
+        className="table-wrap fit-scroll"
+        ref={scrollRef}
+        style={maxHeight > 0 ? { '--fit-max': `${maxHeight}px` } : undefined}
+      >
         <table className="table">
           <thead>
             <tr>
@@ -56,7 +84,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
           </tbody>
         </table>
       </div>
-      <Pagination page={cur} total={sorted.length} perPage={PER_PAGE} onChange={setPage} />
+      <Pagination page={page} total={sorted.length} perPage={pageSize} onChange={setPage} />
     </section>
   );
 }

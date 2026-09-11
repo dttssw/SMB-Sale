@@ -15,12 +15,14 @@ build:
     - npm ci --no-audit --no-fund
     - npm run build
   artifacts:
+    # 不要加 node_modules/：本项目 node_modules 有 8351 个文件 / 106 MB，打成制品 zip
+    # 约 36 MB，会让项目存储长期多占 30 MB 以上（GitLab 会保留最近一次成功流水线的制品，
+    # expire_in 对它无效）。依赖改由 deploy 阶段自己安装，见下方 deploy。
     paths:
       - dist/
       - server/
       - package.json
       - package-lock.json
-      - node_modules/
     expire_in: 30 min
 
 deploy:
@@ -28,6 +30,11 @@ deploy:
   tags:
     - smb-sale
   script:
+    # 依赖在这里装（与 build 阶段同样的 npm ci），替代原来的 node_modules 制品。
+    # 这一步排在 rsync / systemctl restart 之前，失败即终止流水线，线上服务不受影响。
+    # 想进一步精简虚拟机上的 node_modules，可改成 npm ci --omit=dev（运行时只需要
+    # dependencies：express / better-sqlite3 / multer / cors / react / react-dom / recharts）。
+    - npm ci --no-audit --no-fund
     - mkdir -p /opt/smb-sale
     - rsync -a --delete --exclude 'server/data' --exclude 'server/uploads' ./ /opt/smb-sale/
     - systemctl restart smb-sale
