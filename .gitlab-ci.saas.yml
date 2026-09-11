@@ -9,9 +9,11 @@
 
 workflow:
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" # 在界面上手动 Run pipeline
-    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "web" # 界面上手动 Run pipeline
+    - if: $CI_PIPELINE_SOURCE == "api" # 用 glab / API 手动触发
+    - if: $CI_PIPELINE_SOURCE == "push" # 推代码自动触发
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "schedule"
 
 stages:
   - build
