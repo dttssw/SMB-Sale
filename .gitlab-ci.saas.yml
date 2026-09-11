@@ -1,0 +1,50 @@
+# 极狐 SaaS（jihulab.com）专用流水线
+#
+# 为什么单独一份：共享 runner 没有 smb-sale 这个 tag，而 deploy 阶段要 rsync 到
+# /opt/smb-sale 并重启 systemctl，那是自建实例(172.16.43.132)上的路径，在 SaaS
+# runner 里跑必然失败。所以 SaaS 侧只做「装依赖 + 构建 + 产物校验」，不碰部署。
+#
+# 用法：本项目的 CI/CD 配置路径已在 Settings > CI/CD > General pipelines 里
+# 指向本文件，自建实例继续用 .gitlab-ci.yml，两边互不影响。
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web" # 在界面上手动 Run pipeline
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+stages:
+  - build
+  - verify
+
+default:
+  image: node:22
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+build:
+  stage: build
+  script:
+    - node -v && npm -v
+    - npm ci --no-audit --no-fund
+    - npm run build
+  artifacts:
+    name: "dist-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - dist/
+    expire_in: 1 week
+
+verify:
+  stage: verify
+  needs: [build]
+  script:
+    - test -f dist/index.html
+    - echo "产物文件数：$(find dist -type f | wc -l)"
+    - du -sh dist
