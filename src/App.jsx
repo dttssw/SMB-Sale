@@ -4,7 +4,7 @@ import { useViewport } from './hooks/useViewportFit.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { sumBy } from './utils/format.js';
-import { PRODUCTS } from './data/constants.js';
+import { PRODUCTS, RENEW_WINDOW_DAYS } from './data/constants.js';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
@@ -101,7 +101,7 @@ export default function App() {
     const overdueContracts = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
     const expiring = contracts.filter((c) => {
       const d = daysUntil(c.expiryDate);
-      return d != null && d <= 45;
+      return d != null && d <= RENEW_WINDOW_DAYS;
     }).length;
     const exp30 = contracts.filter((c) => {
       const d = daysUntil(c.expiryDate);
@@ -121,7 +121,7 @@ export default function App() {
   // 侧边导航角标（仅在有数量时显示）
   const navBadges = { follow: stats.followDue, contracts: stats.expiring, journal: stats.todayWork };
 
-  // ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+  // ---- 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天（见 src/data/constants.js）的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
   const syncRef = useRef(false);
   const runSync = async () => {
     try {
@@ -158,7 +158,7 @@ export default function App() {
       let savedId = data.id;
       if (data.id) await prospectsDb.update(data);
       else {
-        // 新跟进客户默认归入 New（Renew 由到期<45天的在约客户自动生成）
+        // 新跟进客户默认归入 New（Renew 由到期 < RENEW_WINDOW_DAYS 天的在约客户自动生成）
         const saved = await prospectsDb.create({ ...data, category: 'new', id: uid() });
         savedId = saved.id;
       }
@@ -219,6 +219,10 @@ export default function App() {
 
   // 跟进中的客户 → 转为在约客户：复用跟进入的客户主档（customerId），使其与在约客户共享同一份名称/联系人/备注时间线
   const convertToContract = async (prospect, data) => {
+    if (prospect.category === 'renew') {
+      setActionError('续约跟进客户本身关联着在约合同，不能重复转为在约');
+      return;
+    }
     try {
       const saved = await contractsDb.create({ ...data, id: uid(), customerId: prospect.customerId });
       // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交；续约（Renew）不记录金额
@@ -339,6 +343,7 @@ export default function App() {
       setActionError('');
     } catch (err) {
       setActionError(err.message);
+      throw err; // 抛给 WorkJournal：保存失败时保留输入内容
     }
   };
 
@@ -358,6 +363,7 @@ export default function App() {
       setActionError('');
     } catch (err) {
       setActionError(err.message);
+      throw err; // 抛给 WorkJournal：保存失败时保留编辑框
     }
   };
 

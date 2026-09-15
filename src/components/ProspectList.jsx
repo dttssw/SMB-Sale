@@ -3,7 +3,7 @@ import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
 import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
-import { stageOf } from '../data/constants.js';
+import { stageOf, RENEW_WINDOW_DAYS } from '../data/constants.js';
 import { daysUntil, formatDate, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 
@@ -65,7 +65,7 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
                       <div className="cell-sub danger-text">已过期 {-expiryDays} 天</div>
                     )}
                     {expiryDays != null && expiryDays >= 0 && (
-                      <div className={`cell-sub${expiryDays <= 45 ? ' warn-text' : ''}`}>还剩 {expiryDays} 天</div>
+                      <div className={`cell-sub${expiryDays <= RENEW_WINDOW_DAYS ? ' warn-text' : ''}`}>还剩 {expiryDays} 天</div>
                     )}
                   </td>
                 )}

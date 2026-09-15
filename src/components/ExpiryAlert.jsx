@@ -1,9 +1,7 @@
 import Badge from './Badge.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-
-// 到期少于 45 天视为临期（与「续约跟进自动生成」的阈值一致）
-const ALERT_DAYS = 45;
+import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 function daysBadge(d) {
   if (d < 0) return { label: `已逾期 ${-d} 天`, tone: 'danger' };
@@ -16,7 +14,7 @@ function daysBadge(d) {
 export default function ExpiryAlert({ contracts, onView, onRenew }) {
   const expiring = contracts
     .map((c) => ({ ...c, days: daysUntil(c.expiryDate) }))
-    .filter((c) => c.days != null && c.days <= ALERT_DAYS)
+    .filter((c) => c.days != null && c.days <= RENEW_WINDOW_DAYS)
     .sort((a, b) => a.days - b.days);
 
   if (expiring.length === 0) {
@@ -25,7 +23,7 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
         <div className="expiry-alert-icon">✅</div>
         <div className="expiry-alert-body">
           <strong>在约客户状态稳定</strong>
-          <span>共 {contracts.length} 家，暂无 45 天内到期的临期风险，无需额外操心</span>
+          <span>共 {contracts.length} 家，暂无 {RENEW_WINDOW_DAYS} 天内到期的临期风险，无需额外操心</span>
         </div>
       </div>
     );
@@ -40,7 +38,7 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
         <div>
           <strong>在约客户即将到期，快去跟进续约</strong>
           <span>
-            {expiring.length} 家将在 45 天内到期{overdue ? `，其中 ${overdue} 家已逾期` : ''}，建议优先处理
+            {expiring.length} 家将在 {RENEW_WINDOW_DAYS} 天内到期{overdue ? `，其中 ${overdue} 家已逾期` : ''}，建议优先处理
           </span>
         </div>
       </div>

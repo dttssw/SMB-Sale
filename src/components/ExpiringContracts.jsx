@@ -5,6 +5,7 @@ import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
+import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
@@ -38,7 +39,7 @@ export default function ExpiringContracts({ contracts, onView }) {
   const paged = slicePage(sorted);
   const stableCount = sorted.filter((c) => {
     const d = daysUntil(c.expiryDate);
-    return d == null || d > 45;
+    return d == null || d > RENEW_WINDOW_DAYS;
   }).length;
 
   return (

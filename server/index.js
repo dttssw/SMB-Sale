@@ -210,7 +210,8 @@ function reindexProspectFollowUps() {
     }
   }
 }
-// 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
+// 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天（见 src/data/constants.js）的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
+// ⚠️ 需与前端 src/data/constants.js 的 RENEW_WINDOW_DAYS 保持一致
 const RENEW_WINDOW_DAYS = 45;
 function syncRenewals() {
   const contracts = db.prepare(`SELECT * FROM contracts`).all();
@@ -241,7 +242,7 @@ function syncRenewals() {
       }
     }
   }
-  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不再少于45天到期时移除该跟进角色。
+  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不再少于 RENEW_WINDOW_DAYS 天到期时移除该跟进角色。
   // 备注属于共享的客户主档时间线，这里只删除角色行、不动 customer 与 notes；手动新建的 Renew 客户（contractId 为空）保留不删。
   const renews = db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all();
   for (const r of renews) {
@@ -330,14 +331,29 @@ app.delete('/api/materials/:id', (req, res, next) => {
 // customer：客户主档（跟进 / 在约 共用同一条时间线）；partner：合作伙伴独立档案
 const NOTE_TYPES = ['contract', 'prospect', 'partner', 'customer'];
 
-// 清理超过 1 个月的旧备注（自动删除；SQLite datetime('now') 为 UTC，与 createdAt 一致）
-function purgeOldNotes() {
+// 归档超过 1 个月的旧备注（见 archiveOldNotes）
+// 备注自动归档：超过 1 个月的备注不再直接删除，而是先追加写入 archive/notes-archive.jsonl，再从 notes 表移除。
+// 目的：让 VM 上的 smb.db 体积保持可控，同时不丢失历史沟通记录（续约周期是一年，历史备注是续约谈判的素材）。
+const ARCHIVE_DIR = path.join(__dirname, 'data', 'archive');
+const ARCHIVE_FILE = path.join(ARCHIVE_DIR, 'notes-archive.jsonl');
+
+function archiveOldNotes() {
   try {
-    const result = db.prepare(`DELETE FROM notes WHERE createdAt < datetime('now', '-1 month')`).run();
-    if (result.changes > 0) console.log(`🧹 已自动清理 ${result.changes} 条超过 1 个月的旧备注`);
-    return result.changes;
+    const rows = db.prepare(`SELECT * FROM notes WHERE createdAt < datetime('now', '-1 month')`).all();
+    if (!rows.length) return 0;
+
+    // 先落盘，再删库：宁可归档文件里出现重复行（下面按 id 去重即可），也不能丢数据
+    fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
+    const payload = rows.map((r) => JSON.stringify({ ...r, archivedAt: new Date().toISOString() })).join('\n') + '\n';
+    fs.appendFileSync(ARCHIVE_FILE, payload, 'utf8');
+
+    const del = db.prepare(`DELETE FROM notes WHERE createdAt < datetime('now', '-1 month')`).run();
+    // 回收空间：SQLite 删行只把页放回空闲列表、文件不会自动缩小，VACUUM 才会。库很小，耗时毫秒级。
+    db.exec('VACUUM');
+    console.log(`🧹 已归档 ${del.changes} 条超过 1 个月的备注 → ${ARCHIVE_FILE}`);
+    return del.changes;
   } catch (err) {
-    console.error('清理旧备注失败：', err.message);
+    console.error('归档旧备注失败：', err.message);
     return 0;
   }
 }
@@ -349,7 +365,7 @@ app.get('/api/notes', (req, res, next) => {
     return res.status(400).json({ error: 'customerType 必须为 contract、prospect、partner 或 customer' });
   }
   if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
-  purgeOldNotes();
+  archiveOldNotes();
   try {
     const rows = db
       .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
@@ -437,7 +453,7 @@ app.delete('/api/notes/:id', (req, res, next) => {
   }
 });
 
-// ---- 续约跟进同步：到期<45天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+// ---- 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
 app.post('/api/sync/renewals', (req, res, next) => {
   try {
     syncRenewals();
@@ -476,6 +492,16 @@ app.post('/api/:table', (req, res, next) => {
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
     let body = req.body || {};
+    // 一家客户只允许一条在约记录：同一 customerId 已有在约时直接拒绝，
+    // 防止续约跟进客户被重复「转为在约」而生成第二条合同。
+    if (table === 'contracts' && body.customerId) {
+      const dup = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?`).get(String(body.customerId));
+      if (dup) {
+        const e = new Error(`该客户已有在约记录（${dup.name}），如需延长期限请在详情里使用「续约」`);
+        e.status = 409;
+        throw e;
+      }
+    }
     // 在约 / 跟进统一走客户主档：解析/创建 customers，并让该角色行引用 customerId
     if (table === 'contracts' || table === 'prospects') {
       const identity = attachCustomerIdentity(table, body);
@@ -615,8 +641,8 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: message });
 });
 
-// 启动时清理一次超过 1 个月的旧备注
-purgeOldNotes();
+// 启动时归档一次超过 1 个月的旧备注
+archiveOldNotes();
 
 app.listen(PORT, () => {
   console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${PORT}`);

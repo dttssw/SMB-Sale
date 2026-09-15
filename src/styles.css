@@ -481,3 +481,28 @@ body {
   .topbar-desc { display: none; }
   .app-content { padding: 16px 16px 32px; }
 }
+
+/* ---- 移动端触控适配 ----
+   iOS Safari 在聚焦字号 < 16px 的输入框时会强制放大整页，窄屏统一提到 16px；
+   同时把行内小按钮的点击区域撑到 ≥44px。仅窄屏生效，桌面端观感不变。 */
+@media (max-width: 767px) {
+  .field input,
+  .field select,
+  .field textarea,
+  .note-form textarea,
+  .note-edit textarea,
+  .work-add textarea,
+  .material-note-input,
+  .datepicker select,
+  .list-pagesize select {
+    font-size: 16px;
+  }
+  .link-btn {
+    font-size: 14px;
+    padding: 10px 2px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+}
+

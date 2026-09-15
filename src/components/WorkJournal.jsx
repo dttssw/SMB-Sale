@@ -28,12 +28,16 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
   const viewport = useViewport();
   const { panelRef, scrollRef, maxHeight } = useFitScroll(viewport.height, [displayEntries.length, view]);
 
-  const add = (e) => {
+  const add = async (e) => {
     e.preventDefault();
     const content = text.trim();
     if (!content) return;
-    onAdd(content);
-    setText('');
+    try {
+      await onAdd(content);
+      setText('');
+    } catch {
+      // 保存失败由父级横幅提示，输入内容保留在框里
+    }
   };
 
   const startEdit = (w) => {

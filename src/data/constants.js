@@ -15,3 +15,8 @@ export function stageOf(key) {
 export function productOf(key) {
   return PRODUCTS.includes(key) ? key : PRODUCTS[0];
 }
+
+// 续约提醒窗口（天）：订阅到期日距今小于该天数即视为「临期」，自动生成 Renew 跟进并在各处高亮。
+// 修改这一个值会同时影响：总览统计、在约客户列表、临期提醒条、客户跟进列表。
+// ⚠️ 后端 server/index.js 的 RENEW_WINDOW_DAYS 必须与本值保持一致（后端不能直接 import 前端模块）。
+export const RENEW_WINDOW_DAYS = 45;

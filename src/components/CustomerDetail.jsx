@@ -127,7 +127,10 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
   const items = [
     { label: '编辑', onClick: onEdit },
     ...(isContract && onRenew ? [{ label: '续约', onClick: onRenew }] : []),
-    ...(!isContract && !isPartner && onConvert ? [{ label: '转为在约', onClick: onConvert }] : []),
+    // 只有跟进类 New 客户可以转为在约：续约跟进（renew）本身已关联在约合同，再转会生成第二条在约记录
+    ...(customerType === 'prospect' && customer.category === 'new' && onConvert
+      ? [{ label: '转为在约', onClick: onConvert }]
+      : []),
     { label: '删除', danger: true, onClick: onDelete },
   ];
 
