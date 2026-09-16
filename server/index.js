@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import multer from 'multer';
-import { db, toUtf8 } from './db.js';
+import { db, toUtf8, normalizeCustomerName } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -110,8 +110,33 @@ function findRow(table, id) {
 // ---- 客户主档（统一档案）----
 // 同一家公司在「跟进 / 在约」板块通过 customerId 指向同一条 customers 记录，
 // 使名称 / 联系人 / 备注全局一致，不再复制粘贴。合作伙伴（partners）保持独立档案。
+// 客户名唯一：名称即身份标识（同一名称 = 同一家公司），同名只允许一条 customers 记录。
 function customerById(id) {
   return db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id);
+}
+
+// 按名称查已有客户主档（名称已规范化，直接用等值匹配）
+function findCustomerByName(name) {
+  const clean = normalizeCustomerName(name);
+  if (!clean) return null;
+  return db.prepare(`SELECT * FROM customers WHERE name = ? ORDER BY createdAt ASC LIMIT 1`).get(clean);
+}
+
+// 客户名 / 客户档案冲突统一用 409 + 可读提示返回（前端弹窗与页头横幅都会展示）
+function conflict(message) {
+  const e = new Error(message);
+  e.status = 409;
+  return e;
+}
+
+// 客户名唯一：改名撞到别的客户时直接拒绝，避免出现两条同名主档（备注时间线也会被拆散）
+function assertCustomerNameFree(name, selfId) {
+  const clash = db
+    .prepare(`SELECT id, name FROM customers WHERE name = ? AND id != ? ORDER BY createdAt ASC LIMIT 1`)
+    .get(normalizeCustomerName(name), String(selfId || ''));
+  if (clash) {
+    throw conflict(`客户名称「${clash.name}」已存在（客户名唯一）：请直接在已有客户上编辑，或换一个名称`);
+  }
 }
 
 // 把某客户主档的姓名 / 联系人同步镜像到所有指向它的在约 / 跟进角色行，保证各板块看到一致资料
@@ -122,32 +147,52 @@ function mirrorCustomer(customerId) {
   db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact, customerId);
 }
 
-// 依据请求体解析 / 创建客户主档，返回该主档的 { customerId, name, contact }。
-// 若请求体带 customerId（如由跟进入转在约 / 手动关联），则复用该主档；否则新建。
+// 依据请求体解析 / 复用 / 创建客户主档，返回该主档的 { customerId, name, contact }。
+// 客户名唯一，优先级：
+//  1) 请求体带 customerId（转为在约 / 编辑角色行）→ 复用该主档；原主档已被删除时按名称兜底复用
+//  2) 名称已存在（新增客户时同名）→ 直接复用已有主档，不再新建（这正是过去出现同名客户的原因）
+//  3) 确实没有同名客户 → 新建主档
 function attachCustomerIdentity(table, body) {
   const hasName = body && body.name != null;
   const hasContact = body && body.contact != null;
-  const name = hasName ? String(body.name).trim() : '';
+  const name = hasName ? normalizeCustomerName(body.name) : '';
   const contact = hasContact ? String(body.contact).trim() : '';
   let cid = body && body.customerId ? String(body.customerId) : '';
-  if (cid) {
-    const c = customerById(cid);
-    if (!c) {
-      db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
+  let c = cid ? customerById(cid) : null;
+  let reusedByName = false;
+
+  if (!c) {
+    const same = findCustomerByName(name);
+    if (same) {
+      // 同名客户：复用已有主档（含其备注时间线），避免同一家公司出现第二条档案
+      cid = same.id;
+      c = same;
+      reusedByName = true;
     } else {
-      const newName = name || c.name;
-      const newContact = hasContact ? contact : c.contact;
-      if (newName !== c.name || newContact !== c.contact) {
-        db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(newName, newContact, cid);
+      if (!name) {
+        const e = new Error('缺少必填字段: name');
+        e.status = 400;
+        throw e;
       }
+      if (!cid) cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
+      c = customerById(cid);
     }
   } else {
-    cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
+    cid = c.id;
   }
-  const c = customerById(cid);
+
+  // 客户名唯一：改名撞到别的客户主档时拒绝
+  const newName = name || c.name;
+  if (newName !== c.name) assertCustomerNameFree(newName, cid);
+  // 复用了同名主档时，表单里的空联系人不应覆盖已有联系人（其余情况按表单原样保存）
+  const newContact = hasContact ? (reusedByName && !contact ? c.contact : contact) : c.contact;
+  if (newName !== c.name || newContact !== (c.contact || '')) {
+    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(newName, newContact || '', cid);
+  }
   mirrorCustomer(cid);
-  return { customerId: cid, name: c.name, contact: c.contact };
+  const fresh = customerById(cid);
+  return { customerId: cid, name: fresh.name, contact: fresh.contact || '' };
 }
 
 // ---- 日期 / 备注相关工具（后端本地时区；SQLite datetime('now') 存的是 UTC）----
@@ -227,6 +272,11 @@ function syncRenewals() {
         const identity = attachCustomerIdentity('prospects', { name: c.name, contact: c.contact });
         cid = identity.customerId;
         db.prepare(`UPDATE contracts SET customerId = ?, name = ?, contact = ? WHERE id = ?`).run(cid, c.name, c.contact || '', c.id);
+      }
+      // 客户名唯一：该客户已有手动新建的 Renew 跟进时不再自动补一条，
+      // 否则同一家客户会在续约列表里出现两条同名记录（手动那条保持原样，也不受自动退出影响）
+      if (!existing && db.prepare(`SELECT id FROM prospects WHERE category = 'renew' AND customerId = ?`).get(cid)) {
+        continue;
       }
       const cust = customerById(cid) || { name: c.name, contact: c.contact || '' };
       const data = { name: cust.name, contact: cust.contact || '', expectedAmount: c.contractAmount, expiryDate: c.expiryDate };
@@ -486,32 +536,103 @@ app.get('/api/:table', (req, res, next) => {
   }
 });
 
+// 客户名唯一 → 一家客户在「在约 / 客户跟进 / 续约跟进」里各最多出现一次。
+// 同一客户跨板块重复（例如既在客户跟进又在约）会让同一家公司出现两条记录、备注时间线被拆开，因此写入前统一校验。
+// excludeId：更新角色行时排除自身。
+function assertCustomerRoleFree(table, row, excludeId) {
+  const cid = String(row.customerId || '');
+  if (!cid) return;
+  const skip = excludeId ? ` AND id != ?` : ``;
+  const skipArgs = excludeId ? [excludeId] : [];
+  if (table === 'contracts') {
+    const dup = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?${skip}`).get(cid, ...skipArgs);
+    if (dup) {
+      throw conflict(`该客户已有在约记录（${dup.name}），如需延长期限请在详情里使用「续约」`);
+    }
+    const following = db
+      .prepare(`SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new'${skip}`)
+      .get(cid, ...skipArgs);
+    if (following) {
+      throw conflict(`客户「${following.name}」仍在客户跟进列表中，请在其详情里使用「转为在约」`);
+    }
+  }
+  if (table === 'prospects') {
+    const category = row.category === 'renew' ? 'renew' : 'new';
+    const dup = db
+      .prepare(`SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ?${skip}`)
+      .get(cid, category, ...skipArgs);
+    if (dup) {
+      throw conflict(
+        `客户「${dup.name}」已在「${category === 'renew' ? '续约跟进' : '客户跟进'}」列表中，请直接查看 / 编辑该条记录`
+      );
+    }
+    // 新签跟进不能挂在已是在约客户的公司上（续约由系统按到期时间自动带出 Renew）
+    if (category === 'new') {
+      const active = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?${skip}`).get(cid, ...skipArgs);
+      if (active) {
+        throw conflict(`客户「${active.name}」已是在约客户，续约跟进会在临期时自动带出，无需重复新增跟进`);
+      }
+    }
+  }
+}
+
+// 写入角色行（在约 / 跟进）前的统一准备：解析客户主档 + 校验同一客户在各板块的唯一性
+function prepareCustomerRole(table, body, excludeId) {
+  const row = sanitize(table, body);
+  if (table === 'contracts' || table === 'prospects') {
+    const identity = attachCustomerIdentity(table, body);
+    row.customerId = identity.customerId;
+    row.name = identity.name;
+    row.contact = identity.contact;
+    assertCustomerRoleFree(table, row, excludeId);
+  }
+  return row;
+}
+
+function insertRow(table, row) {
+  const keys = Object.keys(row);
+  const placeholders = keys.map((k) => `@${k}`).join(', ');
+  db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`).run(row);
+  return findRow(table, row.id);
+}
+
 // 新增：POST /api/:table
 app.post('/api/:table', (req, res, next) => {
   const table = req.params.table;
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
-    let body = req.body || {};
-    // 一家客户只允许一条在约记录：同一 customerId 已有在约时直接拒绝，
-    // 防止续约跟进客户被重复「转为在约」而生成第二条合同。
-    if (table === 'contracts' && body.customerId) {
-      const dup = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?`).get(String(body.customerId));
-      if (dup) {
-        const e = new Error(`该客户已有在约记录（${dup.name}），如需延长期限请在详情里使用「续约」`);
-        e.status = 409;
-        throw e;
-      }
+    const body = req.body || {};
+    // 先做字段校验（缺必填字段直接 400），再解析客户主档，避免校验失败时留下一条空档
+    const row = prepareCustomerRole(table, body);
+    res.status(201).json(insertRow(table, row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 转为在约：POST /api/prospects/:id/convert（body 为 ContractForm 的字段）
+// 「移出跟进 + 建立在约」必须在同一个事务里完成：分两次请求时，若第二步失败会留下「合同已建、跟进还在」的中间态，
+// 同一家客户就会同时出现在两个板块。改名 / 同名复用等主档逻辑仍走 prepareCustomerRole（客户名唯一）。
+app.post('/api/prospects/:id/convert', (req, res, next) => {
+  try {
+    const p = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(req.params.id);
+    if (!p) return res.status(404).json({ error: '记录不存在' });
+    if (p.category === 'renew') {
+      throw conflict('续约跟进客户本身关联着在约合同，不能重复转为在约');
     }
-    // 在约 / 跟进统一走客户主档：解析/创建 customers，并让该角色行引用 customerId
-    if (table === 'contracts' || table === 'prospects') {
-      const identity = attachCustomerIdentity(table, body);
-      body = { ...body, customerId: identity.customerId, name: identity.name, contact: identity.contact };
-    }
-    const row = sanitize(table, body);
-    const keys = Object.keys(row);
-    const placeholders = keys.map((k) => `@${k}`).join(', ');
-    db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`).run(row);
-    res.status(201).json(findRow(table, row.id));
+    // 带上原客户主档 id：表单里改了名字也只会给这一份主档改名（备注时间线不丢），撞名则 409
+    const body = { ...(req.body || {}), customerId: p.customerId };
+    // 新合同用全新 id（沿用旧前端「转为在约」的约定），不复用跟进记录的 id
+    const rowId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const convert = db.transaction(() => {
+      // 先解除跟进角色（客户主档与共享备注保留，由同一主档承接在约角色），
+      // 再解析 / 校验主档：此时该跟进角色已被移除，不会把自己误判成「仍在客户跟进列表中」
+      db.prepare(`DELETE FROM prospects WHERE id = ?`).run(p.id);
+      const row = prepareCustomerRole('contracts', { ...body, id: rowId });
+      insertRow('contracts', row);
+    });
+    convert();
+    res.status(201).json(findRow('contracts', rowId));
   } catch (err) {
     next(err);
   }
@@ -526,16 +647,9 @@ app.put('/api/:table/:id', (req, res, next) => {
     const existing = findRow(table, id);
     if (!existing) return res.status(404).json({ error: '记录不存在' });
     let body = { ...existing, ...req.body, id };
-    // 编辑在约 / 跟进客户的身份字段（名称/联系人）时，更新客户主档，并同步镜像到所有同 customerId 的角色行
-    if (table === 'contracts' || table === 'prospects') {
-      const hasIdentityField =
-        req.body && (req.body.name !== undefined || req.body.contact !== undefined || req.body.customerId !== undefined);
-      if (hasIdentityField) {
-        const identity = attachCustomerIdentity(table, body);
-        body = { ...body, customerId: identity.customerId, name: identity.name, contact: identity.contact };
-      }
-    }
-    const row = sanitize(table, body);
+    // 编辑在约 / 跟进客户的身份字段（名称/联系人）时，更新客户主档，并同步镜像到所有同 customerId 的角色行；
+    // 同时按「客户名唯一」重新校验板块归属（排除自身）
+    const row = prepareCustomerRole(table, body, id);
     const sets = COLUMNS[table]
       .filter((k) => k in row)
       .map((k) => `${k} = @${k}`)

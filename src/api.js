@@ -63,4 +63,6 @@ export const api = {
   removeNote: (id) => request(`/notes/${id}`, { method: 'DELETE' }),
   // 同步续约跟进：到期 < RENEW_WINDOW_DAYS 天（见 src/data/constants.js）的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
   syncRenewals: () => request('/sync/renewals', { method: 'POST' }),
+  // 跟进客户 → 转为在约：服务端在一个事务里完成「移出跟进 + 建立在约」，确保同一家客户不会同时出现在两个板块
+  convertProspect: (id, data) => request(`/prospects/${id}/convert`, { method: 'POST', body: JSON.stringify(data) }),
 };

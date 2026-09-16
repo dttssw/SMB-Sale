@@ -3,7 +3,7 @@ import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
 import { PRODUCTS, STAGES } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 
-function Field({ label, required, children, full }) {
+function Field({ label, required, hint, children, full }) {
   return (
     <label className={`field${full ? ' full' : ''}`}>
       <span className="field-label">
@@ -11,6 +11,7 @@ function Field({ label, required, children, full }) {
         {required ? <i>*</i> : null}
       </span>
       {children}
+      {hint ? <span className="field-hint">{hint}</span> : null}
     </label>
   );
 }
@@ -61,7 +62,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
 
   return (
     <form className="form" onSubmit={submit}>
-      <Field label="客户名称" required full>
+      <Field label="客户名称" required full hint="客户名唯一：同名客户会共用同一份档案与备注">
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
       </Field>
       <Field label="产品" required>
@@ -113,7 +114,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
 
   return (
     <form className="form" onSubmit={submit}>
-      <Field label="客户名称" required full>
+      <Field label="客户名称" required full hint="客户名唯一：同名客户会共用同一份档案与备注">
         <input value={form.name} onChange={set('name')} placeholder="如：无锡鼎盛机械" />
       </Field>
       <Field label="跟进阶段" required>
@@ -166,7 +167,7 @@ export function RenewForm({ initial, onSave, onCancel }) {
 
   return (
     <form className="form" onSubmit={submit}>
-      <Field label="客户名称" required full>
+      <Field label="客户名称" required full hint="客户名唯一：同名客户会共用同一份档案与备注">
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
       </Field>
       <Field label="联系人">

@@ -58,8 +58,14 @@ export default function App() {
   const partnersDb = useDbData('partners');
   const materialsDb = useDbData('materials');
   const worklogsDb = useDbData('worklogs');
-  const [modal, setModal] = useState(null);
+  const [modal, setModalState] = useState(null);
   const [actionError, setActionError] = useState('');
+  // 打开 / 关闭弹窗时先清掉上一次的操作提示，避免旧错误串进新弹窗；
+  // 保存失败时弹窗保持打开，该提示会同时显示在页头横幅与弹窗顶部（见 Modal 的 error）
+  const setModal = (next) => {
+    setActionError('');
+    setModalState(next);
+  };
   const [nav, setNav] = useState('home');
   const [followLayout, setFollowLayout] = useState('auto');
   // 自动检测窗口尺寸：宽高都会实时影响板块大小（见 useViewportFit）
@@ -217,20 +223,17 @@ export default function App() {
     }
   };
 
-  // 跟进中的客户 → 转为在约客户：复用跟进入的客户主档（customerId），使其与在约客户共享同一份名称/联系人/备注时间线
+  // 跟进中的客户 → 转为在约客户：由一个事务完成「移出跟进 + 建立在约」，两者复用同一份客户主档
+  // （服务端 /api/prospects/:id/convert），名称/联系人/备注时间线保持连续，也不会出现半转换的中间态
   const convertToContract = async (prospect, data) => {
     if (prospect.category === 'renew') {
       setActionError('续约跟进客户本身关联着在约合同，不能重复转为在约');
       return;
     }
     try {
-      const saved = await contractsDb.create({ ...data, id: uid(), customerId: prospect.customerId });
-      // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交；续约（Renew）不记录金额
-      if (prospect.category !== 'renew') {
-        await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
-      }
-      // 备注时间线已在客户主档上共享（不再复制粘贴），直接移除跟进角色即可（主档与备注保留）
-      await prospectsDb.remove(prospect.id);
+      const saved = await api.convertProspect(prospect.id, data);
+      // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交
+      await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
       await runSync();
       setActionError('');
       setModal(null);
@@ -520,7 +523,7 @@ export default function App() {
       {shell(active.label, active.icon, active.desc, content, navBadges)}
 
       {modal && (
-        <Modal title={modalTitle(modal)} onClose={() => setModal(null)}>
+        <Modal title={modalTitle(modal)} onClose={() => setModal(null)} error={actionError}>
           {modal.kind === 'contract' && (
             <ContractForm
               key={modal.data?.id || 'new'}

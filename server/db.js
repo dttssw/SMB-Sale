@@ -24,6 +24,16 @@ export function toUtf8(name) {
   return decoded.includes('\uFFFD') ? String(name) : decoded;
 }
 
+/**
+ * 客户名称规范化：客户主档以「名称」作为同一家公司的唯一身份标识，
+ * 因此统一去掉首尾空白、把连续空白折叠为一个空格
+ * （避免「阿里巴巴科技 」「阿里巴巴科技」或「阿里 巴巴」被当成不同客户）。
+ * 所有写入 customers.name 的地方都必须先经过这里。
+ */
+export function normalizeCustomerName(name) {
+  return String(name ?? '').trim().replace(/\s+/g, ' ');
+}
+
 // 自动创建数据目录（数据库文件首次启动时生成，不预置任何演示数据）
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -228,9 +238,13 @@ if (!contractColsForCust.includes('customerId')) db.exec(`ALTER TABLE contracts 
 const prospectColsForCust = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
 if (!prospectColsForCust.includes('customerId')) db.exec(`ALTER TABLE prospects ADD COLUMN customerId TEXT DEFAULT ''`);
 
-const newCustomerId = (name, contact) => {
+// 客户名唯一：已有同名主档时复用它，只有确实没有同名客户才新建（不再按行各建一条）
+const ensureCustomerId = (name, contact) => {
+  const clean = normalizeCustomerName(name);
+  const exist = db.prepare(`SELECT id FROM customers WHERE name = ? ORDER BY createdAt ASC LIMIT 1`).get(clean);
+  if (exist) return exist.id;
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(id, name || '', contact || '');
+  db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(id, clean, contact || '');
   return id;
 };
 
@@ -240,7 +254,7 @@ db.transaction(() => {
   for (const c of contracts) {
     let cid = c.customerId;
     if (!cid || !db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(cid)) {
-      cid = newCustomerId(c.name, c.contact);
+      cid = ensureCustomerId(c.name, c.contact);
       db.prepare(`UPDATE contracts SET customerId = ? WHERE id = ?`).run(cid, c.id);
     }
   }
@@ -253,14 +267,16 @@ db.transaction(() => {
       cid = c && c.customerId;
     }
     if (!cid && p.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(p.customerId)) cid = p.customerId;
-    if (!cid) cid = newCustomerId(p.name, p.contact);
+    if (!cid) cid = ensureCustomerId(p.name, p.contact);
     db.prepare(`UPDATE prospects SET customerId = ? WHERE id = ?`).run(cid, p.id);
   }
 
   // 2) 以在约客户为准，统一客户主档名称 / 联系人，并同步镜像到所有同 customerId 的角色行
   for (const c of contracts) {
     if (!c.customerId) continue;
-    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(c.name, c.contact || '', c.customerId);
+    // 客户名唯一：该名称若已被别的客户主档占用则保持原样（避免撞上唯一索引 / 唯一性约束），其余字段照常镜像
+    const clash = db.prepare(`SELECT 1 FROM customers WHERE name = ? AND id != ?`).get(c.name, c.customerId);
+    if (!clash) db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(c.name, c.contact || '', c.customerId);
     db.prepare(`UPDATE contracts SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
     db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
   }
@@ -283,4 +299,59 @@ db.transaction(() => {
   db.prepare(`UPDATE contracts SET note = '' WHERE customerId != '' AND note != ''`).run();
   db.prepare(`UPDATE prospects SET note = '' WHERE customerId != '' AND note != ''`).run();
 })();
+
+// 迁移：客户名称唯一化 —— 同一名称 = 同一家公司，同名只允许一条客户主档。
+// 历史库里重复录入（新增跟进 / 新建续约时各建一条主档）或改名撞名都会产生同名主档，
+// 这里一次性收口：
+//  1) 名称规范化（去首尾空白、折叠连续空白），避免「阿里巴巴 」「阿里巴巴」被当成两家公司
+//  2) 同名主档合并：contracts / prospects 的 customerId、主档备注（customerType='customer'）统一指向保留的那条，其余删除
+//  3) 建立 customers.name 唯一索引，从数据库层面兜住后续重复写入
+export function mergeDuplicateCustomers(database = db) {
+  const rows = database.prepare(`SELECT id, name, contact, createdAt FROM customers ORDER BY createdAt ASC, id ASC`).all();
+  if (!rows.length) return 0;
+
+  const groups = new Map();
+  for (const r of rows) {
+    const key = normalizeCustomerName(r.name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  // 该主档是否已挂在在约 / 跟进角色上（优先保留有角色引用的那条，改动最少）
+  const rolesOf = database.prepare(
+    `SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`
+  );
+
+  let merged = 0;
+  database.transaction(() => {
+    for (const [name, list] of groups) {
+      const keep = list.find((r) => rolesOf.get(r.id, r.id).c > 0) || list[0];
+      for (const dup of list) {
+        if (dup.id === keep.id) continue;
+        database.prepare(`UPDATE contracts SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
+        database.prepare(`UPDATE prospects SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
+        database.prepare(`UPDATE notes SET customerId = ? WHERE customerType = 'customer' AND customerId = ?`).run(keep.id, dup.id);
+        database.prepare(`DELETE FROM customers WHERE id = ?`).run(dup.id);
+        merged += 1;
+      }
+      // 名称 / 联系人收口：名称统一为规范形态，联系人保留第一个非空值
+      const contact = keep.contact || list.map((r) => r.contact).find((v) => v) || '';
+      if (name !== keep.name || contact !== (keep.contact || '')) {
+        database.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(name, contact, keep.id);
+      }
+    }
+  })();
+
+  if (merged > 0) console.log(`✅ 已合并 ${merged} 条同名客户主档（客户名唯一）`);
+  return merged;
+}
+
+mergeDuplicateCustomers();
+
+// 唯一索引：客户名称在数据库层面不可重复（上面的合并已保证存量数据无同名，正常不会失败）
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_name ON customers(name)`);
+} catch (err) {
+  console.warn('⚠️ 客户名称唯一索引创建失败（仍存在同名客户主档）：', err.message);
+}
 

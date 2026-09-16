@@ -1,4 +1,4 @@
-export default function Modal({ title, onClose, children }) {
+export default function Modal({ title, onClose, error, children }) {
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -8,7 +8,10 @@ export default function Modal({ title, onClose, children }) {
             ✕
           </button>
         </div>
-        <div className="modal-body">{children}</div>
+        <div className="modal-body">
+          {error && <div className="form-error modal-error">⚠️ {error}</div>}
+          {children}
+        </div>
       </div>
     </div>
   );
