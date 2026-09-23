@@ -260,6 +260,9 @@ button, input, select, textarea { font-family: inherit; }
 .expiry-alert-item { display: flex; align-items: center; gap: var(--s4); padding: var(--s3) 0; border-top: 1px solid var(--line); }
 .expiry-alert-item-main { flex: 1; min-width: 0; }
 .expiry-alert-item-ops { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; }
+/* 整行可点（「续约」按钮由守卫函数排除，不会误触详情） */
+.expiry-alert-item.row-clickable { cursor: pointer; }
+.expiry-alert-item.row-clickable:hover { background: var(--surface-2); }
 
 /* ---------- 7. 标签 / 状态 / 圆点 ---------- */
 .badge, .pill, .plan-tag, .follow-tag {
@@ -423,23 +426,31 @@ button, input, select, textarea { font-family: inherit; }
 .table tbody tr { transition: background-color var(--t-fast) var(--ease-out); }
 .table tbody tr:hover { background: var(--surface-2); }
 .table .num { text-align: right; white-space: nowrap; }
-.table .strong { font-weight: 600; color: var(--fg); }
-/* 金额：20px / 600 / tabular / 右对齐 */
-.table td.num.strong { font-size: var(--fs-xl); }
+.table .strong { font-weight: 500; color: var(--fg); }
+/* 金额：14px / 500 / tabular / 右对齐 —— 必须小于客户名字号（16px） */
+.table td.num.strong { font-size: var(--fs-md); }
 .table .ops { text-align: right; white-space: nowrap; }
-/* 客户名在表格里恒为单行（过长则省略号，完整名称在 title 里），保证行高节奏稳定 */
-.table td .link-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 双栏并排时每栏偏窄，金额降一档（16px），把宽度让给客户名 */
-.workspace-grid:not(.grid-wide) .table td.num.strong { font-size: var(--fs-lg); }
-.cell-main { font-weight: 500; }
-.cell-sub { margin-top: 0; font-size: var(--fs-2xs); line-height: 1.25; color: var(--fg-muted); }
+/* 客户名在表格里恒为单行（过长则省略号，完整名称在 title 里），保证行高节奏稳定；
+   字号/字重是行内最强层级：16px / 600，比任何属性值至少大 2px、重 100 */
+.table td .link-name {
+  font-size: var(--fs-lg); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 客户名列给足宽度：舒适模式 ≈180px，窄档收到 150px（仍可完整显示 ≥6 个汉字） */
+.follow-table-wrap .table th:first-child,
+.follow-table-wrap .table td:first-child { min-width: 180px; }
+/* 整行可点：键盘可达性仍由客户名按钮承担，行本身不进 Tab 顺序 */
+.table tbody tr.row-clickable { cursor: pointer; }
+.row-chevron { display: inline-flex; align-items: center; color: var(--fg-dim); transition: color var(--t-fast) var(--ease-out); }
+.row-clickable:hover .row-chevron { color: var(--fg); }
+.cell-main { font-weight: 500; font-size: var(--fs-md); }
+.cell-sub { margin-top: 0; font-size: var(--fs-xs); line-height: 1.25; color: var(--fg-muted); }
 .empty { padding: var(--s4) 0; text-align: center; color: var(--fg-muted); }
 
 /* 紧凑模式：单行约 32px（12px 正文 + 8px 内距） */
 .is-dense .table { font-size: var(--fs-xs); }
 .is-dense .table th, .is-dense .table td { padding: var(--s2); }
 .is-dense .cell-sub { margin-top: 0; }
-.is-dense .table td.num.strong { font-size: var(--fs-lg); }
 
 /* 自适应高度：JS 把算好的高度写进 --fit-max；表格内部滚动时表头吸顶 */
 .fit-scroll { max-height: var(--fit-max, var(--follow-table-max, none)); overflow: auto; scrollbar-gutter: stable; }
@@ -618,8 +629,20 @@ button, input, select, textarea { font-family: inherit; }
   .app-content { padding: var(--s5); }
   .topbar { padding: 0 var(--s5); }
   .footer { padding: var(--s5); }
-  /* 双栏并排时金额降一档，避免跟进表在窄栏里横向溢出 */
-  .workspace-grid .table td.num.strong { font-size: var(--fs-lg); }
+  /* 双栏并排时每栏偏窄：客户名列下限收到 150px（金额统一 14px，不再需要单独降档） */
+  .follow-table-wrap .table th:first-child,
+  .follow-table-wrap .table td:first-child { min-width: 150px; }
+  /* 双栏 + ≤1360：5 列要挤进窄栏 —— 单元格左右内距收到 8px，客户名列固定 130px
+     （长名称走省略号，仍可读 ≥6 个汉字），这样既不横向滚动、也不把名称截到只剩两三个字 */
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table th,
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table td { padding-left: var(--s2); padding-right: var(--s2); }
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table th:first-child,
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table td:first-child { min-width: 130px; max-width: 130px; }
+}
+@media (max-width: 1280px) {
+  /* 更窄的双栏：续约表要多放一列「续约到期」，客户名列再收到 114px（仍可读 6 个汉字） */
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table th:first-child,
+  .workspace-grid:not(.grid-wide) .follow-table-wrap .table td:first-child { min-width: 114px; max-width: 114px; }
 }
 @media (max-width: 1180px) {
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

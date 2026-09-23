@@ -42,6 +42,13 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
 
   const overdue = expiring.filter((c) => c.days < 0).length;
 
+  // 整行可点：点在「续约」按钮等交互控件上、或刚拖选过文字时不触发
+  const handleRowClick = (e, row) => {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    if (window.getSelection()?.toString()) return;
+    onView(row);
+  };
+
   return (
     <section className="panel expiry-alert">
       <div className="expiry-alert-head">
@@ -59,7 +66,7 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
         {expiring.map((c) => {
           const b = daysBadge(c.days);
           return (
-            <div key={c.id} className="expiry-alert-item">
+            <div key={c.id} className="expiry-alert-item row-clickable" onClick={(e) => handleRowClick(e, c)}>
               <div className="expiry-alert-item-main">
                 <button type="button" className="link-name" onClick={() => onView(c)} title={`${c.name} · 查看客户详情`}>
                   {c.name}
@@ -70,9 +77,9 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
               </div>
               <Badge tone={b.tone}>{b.label}</Badge>
               <div className="expiry-alert-item-ops">
-                <button type="button" className="link-btn" onClick={() => onView(c)}>
-                  查看
-                </button>
+                <span className="row-chevron">
+                  <Icon name="chevronRight" />
+                </span>
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => onRenew(c)}>
                   续约
                 </button>

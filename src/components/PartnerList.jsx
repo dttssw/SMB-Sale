@@ -26,6 +26,13 @@ export default function PartnerList({ partners, onAdd, onView }) {
   } = useFitPaging({ count: sorted.length, viewportHeight: viewport.height, fallbackRows: FALLBACK_ROWS });
   const paged = slicePage(sorted);
 
+  // 整行可点：点在行内其他交互控件上、或刚拖选过文字时不触发
+  const handleRowClick = (e, row) => {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    if (window.getSelection()?.toString()) return;
+    onView(row);
+  };
+
   return (
     <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
@@ -62,7 +69,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
           </thead>
           <tbody>
             {paged.map((p) => (
-              <tr key={p.id}>
+              <tr key={p.id} className="row-clickable" onClick={(e) => handleRowClick(e, p)}>
                 <td>
                   <button type="button" className="link-name" onClick={() => onView(p)} title={`${p.name} · 查看合作伙伴详情`}>
                     {p.name}
@@ -70,9 +77,9 @@ export default function PartnerList({ partners, onAdd, onView }) {
                 </td>
                 <td className="col-opt">{p.contact || '—'}</td>
                 <td className="ops">
-                  <button type="button" className="link-btn" onClick={() => onView(p)}>
-                    详情
-                  </button>
+                  <span className="row-chevron">
+                    <Icon name="chevronRight" />
+                  </span>
                 </td>
               </tr>
             ))}

@@ -1,6 +1,7 @@
 import Badge from './Badge.jsx';
 import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
+import Icon from './icons.jsx';
 import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
@@ -42,6 +43,13 @@ export default function ExpiringContracts({ contracts, onView }) {
     return d == null || d > RENEW_WINDOW_DAYS;
   }).length;
 
+  // 整行可点：点在行内其他交互控件上、或刚拖选过文字时不触发
+  const handleRowClick = (e, row) => {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    if (window.getSelection()?.toString()) return;
+    onView(row);
+  };
+
   return (
     <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
@@ -81,7 +89,7 @@ export default function ExpiringContracts({ contracts, onView }) {
             {paged.map((c) => {
               const st = statusOf(c.expiryDate);
               return (
-                <tr key={c.id}>
+                <tr key={c.id} className="row-clickable" onClick={(e) => handleRowClick(e, c)}>
                   <td>
                     <button type="button" className="link-name" onClick={() => onView(c)} title={`${c.name} · 查看客户详情`}>
                       {c.name}
@@ -97,9 +105,9 @@ export default function ExpiringContracts({ contracts, onView }) {
                     <Badge tone={st.tone}>{st.label}</Badge>
                   </td>
                   <td className="ops">
-                    <button type="button" className="link-btn" onClick={() => onView(c)}>
-                      详情
-                    </button>
+                    <span className="row-chevron">
+                      <Icon name="chevronRight" />
+                    </span>
                   </td>
                 </tr>
               );

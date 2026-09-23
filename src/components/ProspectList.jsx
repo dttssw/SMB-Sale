@@ -16,6 +16,14 @@ function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeig
   // New：客户 / 阶段 / 预估金额 / [上次跟进] / 下次跟进 / 操作；Renew：客户 / 预估金额 / [上次跟进] / 下次跟进 / 续约到期 / 操作
   const colCount = wide ? 6 : 5;
 
+  // 整行可点：点在行内其他交互控件（客户名按钮等）上、或刚拖选过文字时不触发，
+  // 键盘可达性仍由客户名按钮承担，行本身不进 Tab 顺序
+  const handleRowClick = (e, row) => {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    if (window.getSelection()?.toString()) return;
+    onView(row);
+  };
+
   return (
     <div
       className="table-wrap follow-table-wrap fit-scroll"
@@ -40,7 +48,7 @@ function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeig
             const next = p.nextFollowUp ? daysUntil(p.nextFollowUp) : null;
             const expiryDays = isRenew && p.expiryDate ? daysUntil(p.expiryDate) : null;
             return (
-              <tr key={p.id}>
+              <tr key={p.id} className="row-clickable" onClick={(e) => handleRowClick(e, p)}>
                 <td>
                   <button type="button" className="link-name" onClick={() => onView(p)} title={`${p.name} · 查看客户详情`}>
                     {p.name}
@@ -71,9 +79,9 @@ function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeig
                   </td>
                 )}
                 <td className="ops">
-                  <button type="button" className="link-btn" onClick={() => onView(p)}>
-                    详情
-                  </button>
+                  <span className="row-chevron">
+                    <Icon name="chevronRight" />
+                  </span>
                 </td>
               </tr>
             );
