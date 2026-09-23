@@ -275,6 +275,8 @@ body {
 .footer { text-align: center; font-size: 12px; color: var(--muted); padding: 8px 0 4px; }
 .db-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-radius: 10px; background: var(--info-soft); color: #7dd3fc; font-size: 13px; }
 .db-banner.error { background: var(--danger-soft); color: #fca5a5; border: 1px solid rgba(248,113,113,.25); }
+/* 操作提示（如「续约客户已归入在约客户板块」）：成功 / 说明态，绿色 */
+.db-banner.ok { background: var(--ok-soft); color: #6ee7b7; border: 1px solid rgba(52,211,153,.25); }
 .db-error { margin: 40px auto; max-width: 520px; background: var(--card); border: 1px solid var(--border-soft); border-radius: var(--radius); box-shadow: var(--shadow); padding: 28px; text-align: center; }
 .db-error h3 { margin-bottom: 10px; }
 .db-error p { color: var(--muted); font-size: 13px; margin-bottom: 8px; }

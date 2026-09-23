@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
-import { PRODUCTS, STAGES } from '../data/constants.js';
+import { PRODUCTS, RENEW_WINDOW_DAYS, STAGES } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 
 function Field({ label, required, hint, children, full }) {
@@ -149,6 +149,8 @@ export function RenewForm({ initial, onSave, onCancel }) {
     id: initial?.id || null,
     name: initial?.name || '',
     contact: initial?.contact || '',
+    // 产品：与在约记录同步（不在约的续约客户会用它自动补建在约记录）
+    plan: initial?.plan || PRODUCTS[0],
     expectedAmount: initial?.expectedAmount ?? 0,
     expiryDate: initial?.expiryDate || todayStr(),
     lastFollowUp: initial?.lastFollowUp || todayStr(),
@@ -173,10 +175,24 @@ export function RenewForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
       </Field>
+      <Field label="产品" hint="与在约记录同步：该客户不在约时会用它自动补建在约记录">
+        <select value={form.plan} onChange={set('plan')}>
+          {PRODUCTS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </Field>
       <Field label="预计金额（元）" required>
         <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
       </Field>
-      <Field label="续约到期时间" required full>
+      <Field
+        label="续约到期时间"
+        required
+        full
+        hint={`保存后自动判定是否在约：在约客户归入「在约客户」板块；距到期 ≤ ${RENEW_WINDOW_DAYS} 天（约两个月）才留在「续约跟进」`}
+      >
         <DatePicker value={form.expiryDate} onChange={(v) => setForm((f) => ({ ...f, expiryDate: v }))} clearable={false} />
       </Field>
       <Field label="上次跟进日期">

@@ -80,7 +80,9 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
           {items.length === 0 && (
             <tr>
               <td colSpan={colCount} className="empty">
-                {isRenew ? '暂无续约跟进客户，点击右上角新建' : '暂无跟进中的新客户，点击右上角新增'}
+                {isRenew
+                  ? `暂无临期续约客户（距到期 ≤ ${RENEW_WINDOW_DAYS} 天），距到期更久的只显示在「在约客户」板块`
+                  : '暂无跟进中的新客户，点击右上角新增'}
               </td>
             </tr>
           )}
@@ -102,7 +104,8 @@ const VARIANTS = {
     title: '续约跟进',
     tag: 'RENEW',
     isRenew: true,
-    desc: '临期在约自动带出，也可手动新建；续约完成后自动退出',
+    // 只存放临期客户：距到期 > RENEW_WINDOW_DAYS 的在约客户不进这里，只在「在约客户」板块
+    desc: `只放距到期 ≤ ${RENEW_WINDOW_DAYS} 天（约两个月）的在约客户，临期自动带出、续约完成自动退出；更久的只在「在约客户」板块`,
     addLabel: '＋ 新建续约',
   },
 };

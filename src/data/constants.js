@@ -16,7 +16,9 @@ export function productOf(key) {
   return PRODUCTS.includes(key) ? key : PRODUCTS[0];
 }
 
-// 续约提醒窗口（天）：订阅到期日距今小于该天数即视为「临期」，自动生成 Renew 跟进并在各处高亮。
-// 修改这一个值会同时影响：总览统计、在约客户列表、临期提醒条、客户跟进列表。
+// 续约提醒窗口（天）：默认 60 天（约两个月）。订阅到期日距今 ≤ 该天数即视为「临期」。
+// 「续约跟进」板块只存放临期客户（距到期 ≤ 该天数，含已逾期）：
+//   距到期更久的在约客户不进续约跟进，只待在「在约客户」板块，等临期时自动带出。
+// 修改这一个值会同时影响：总览统计、在约客户列表、临期提醒条、续约跟进列表。
 // ⚠️ 后端 server/index.js 的 RENEW_WINDOW_DAYS 必须与本值保持一致（后端不能直接 import 前端模块）。
-export const RENEW_WINDOW_DAYS = 45;
+export const RENEW_WINDOW_DAYS = 60;

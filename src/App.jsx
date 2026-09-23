@@ -24,9 +24,32 @@ const modalTitle = (m) => {
   if (m.kind === 'contract') return m.data ? '编辑在约客户' : '新增在约客户';
   if (m.kind === 'convert') return '跟进客户转为在约客户';
   if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
-  if (m.kind === 'renew') return m.data ? '编辑续约跟进' : '新建 Renew 客户';
+  if (m.kind === 'renew') return m.data ? '编辑续约跟进' : '新建续约客户';
   if (m.kind === 'partner') return m.data ? '编辑合作伙伴' : '新建合作伙伴';
   return '记录成交金额';
+};
+
+// 保存续约客户后的结果提示：说清系统把它放在了哪个板块、为什么这么放
+const daysText = (d) => (d == null ? '' : d < 0 ? `已逾期 ${-d} 天` : `距到期还有 ${d} 天`);
+const renewNotice = (r) => {
+  if (!r) return '';
+  const name = r.contract?.name || '';
+  if (r.renew) {
+    return r.createdContract
+      ? `客户「${name}」已自动建立在约记录并归入「在约客户」板块；${daysText(r.daysLeft)}，已进入续约窗口，同时显示在「续约跟进」`
+      : `已保存客户「${name}」：在约记录与续约跟进信息已同步（${daysText(r.daysLeft)}，仍在续约窗口内）`;
+  }
+  return r.createdContract
+    ? `客户「${name}」已自动建立在约记录并归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，续约跟进里暂不出现，临期时会自动带出`
+    : `客户「${name}」已归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，已退出「续约跟进」，临期时会自动带出`;
+};
+
+// 编辑续约客户时的表单初值：产品以在约记录为准
+// （历史续约行的 plan 可能为空，若直接用表单默认的第一个产品提交，会把在约记录里的产品覆盖掉）
+const renewInitial = (row, contracts) => {
+  if (!row) return null;
+  const contract = contracts.find((c) => c.id === row.contractId);
+  return contract?.plan ? { ...row, plan: contract.plan } : row;
 };
 
 // 客户跟进板块的展示尺寸：自动（按窗口宽度选）/ 双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
@@ -60,10 +83,13 @@ export default function App() {
   const worklogsDb = useDbData('worklogs');
   const [modal, setModalState] = useState(null);
   const [actionError, setActionError] = useState('');
-  // 打开 / 关闭弹窗时先清掉上一次的操作提示，避免旧错误串进新弹窗；
+  // 操作提示（如「续约客户已归入在约客户板块」）：与错误分开，成功态用绿色横幅展示
+  const [actionNotice, setActionNotice] = useState('');
+  // 打开 / 关闭弹窗时先清掉上一次的操作提示，避免旧错误 / 旧提示串进新弹窗；
   // 保存失败时弹窗保持打开，该提示会同时显示在页头横幅与弹窗顶部（见 Modal 的 error）
   const setModal = (next) => {
     setActionError('');
+    setActionNotice('');
     setModalState(next);
   };
   const [nav, setNav] = useState('home');
@@ -127,7 +153,8 @@ export default function App() {
   // 侧边导航角标（仅在有数量时显示）
   const navBadges = { follow: stats.followDue, contracts: stats.expiring, journal: stats.todayWork };
 
-  // ---- 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天（见 src/data/constants.js）的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+  // ---- 续约跟进同步：在约客户距到期 ≤ RENEW_WINDOW_DAYS 天（见 src/data/constants.js）自动带出 Renew 跟进；
+  //      不在约的续约客户由服务端补建在约记录，距到期更久的自动退出续约跟进（客户留在在约客户板块） ----
   const syncRef = useRef(false);
   const runSync = async () => {
     try {
@@ -175,23 +202,17 @@ export default function App() {
     }
   };
 
-  // 新建 / 编辑 Renew 续约跟进客户（手动创建，不关联在约客户）
+  // 新建 / 编辑续约客户：统一交给服务端的「在约判定」——
+  // 已是在约客户 → 归入「在约客户」板块（续约信息与在约记录同步）；不在约 → 自动补建在约记录；
+  // 只有距到期 ≤ RENEW_WINDOW_DAYS 天（约两个月）的才留在「续约跟进」，更久的自动退出（客户留在在约客户板块）
   const saveRenew = async (data) => {
     try {
-      let savedId = data.id;
-      if (data.id) await prospectsDb.update(data);
-      else {
-        const saved = await prospectsDb.create({
-          ...data,
-          stage: 'negotiation',
-          category: 'renew',
-          contractId: '',
-          id: uid(),
-        });
-        savedId = saved.id;
-      }
+      const result = await api.saveRenew(data);
+      // 在约客户 / 续约跟进两个板块都可能被服务端改动，一并重新拉取
+      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
       setActionError('');
       setModal(null);
+      setActionNotice(renewNotice(result));
     } catch (err) {
       setActionError(err.message);
     }
@@ -395,6 +416,14 @@ export default function App() {
               </button>
             </div>
           )}
+          {actionNotice && (
+            <div className="db-banner ok">
+              <span>✅ {actionNotice}</span>
+              <button className="icon-btn" onClick={() => setActionNotice('')} aria-label="关闭">
+                ✕
+              </button>
+            </div>
+          )}
           {content}
         </div>
         <footer className="footer">
@@ -551,7 +580,7 @@ export default function App() {
           {modal.kind === 'renew' && (
             <RenewForm
               key={modal.data?.id || 'new'}
-              initial={modal.data}
+              initial={renewInitial(modal.data, contracts)}
               onSave={saveRenew}
               onCancel={() => setModal(null)}
             />

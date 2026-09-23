@@ -55,7 +55,7 @@ const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'customerId'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'customerId'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
   worklogs: ['id', 'content', 'date'],
@@ -255,51 +255,167 @@ function reindexProspectFollowUps() {
     }
   }
 }
-// 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天（见 src/data/constants.js）的在约客户自动生成/更新 Renew 跟进；不再接近到期的自动退出
-// ⚠️ 需与前端 src/data/constants.js 的 RENEW_WINDOW_DAYS 保持一致
-const RENEW_WINDOW_DAYS = 45;
+// ---- 在约 / 续约的统一判断逻辑（新建客户与历史数据共用同一套规则） ----
+// 续约窗口（天）：默认 60 天（约两个月）。只有距到期 ≤ 该天数的在约客户才进入「续约跟进」板块。
+// ⚠️ 需与前端 src/data/constants.js 的 RENEW_WINDOW_DAYS 保持一致（后端不能直接 import 前端模块）
+const RENEW_WINDOW_DAYS = 60;
+
+// 自动补建在约记录时的默认产品（与前端 src/data/constants.js 的 PRODUCTS[0] 保持一致）
+const DEFAULT_PLAN = '专业版';
+
+// 与前端 src/utils/date.js 的 oneYearBefore 一致：到期时间 − 1 年 + 1 天（订阅默认一年）
+function oneYearBefore(dateStr) {
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  return dateKey(new Date(y - 1, m - 1, d + 1));
+}
+
+// 判定「该客户是否在约」：按 contractId → customerId → 客户名（规范化）依次匹配在约记录
+function findContractFor({ contractId, customerId, name } = {}) {
+  if (contractId) {
+    const byId = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contractId);
+    if (byId) return byId;
+  }
+  if (customerId) {
+    const byCustomer = db
+      .prepare(`SELECT * FROM contracts WHERE customerId = ? ORDER BY expiryDate DESC LIMIT 1`)
+      .get(customerId);
+    if (byCustomer) return byCustomer;
+  }
+  const clean = normalizeCustomerName(name);
+  if (!clean) return null;
+  return db.prepare(`SELECT * FROM contracts WHERE name = ? ORDER BY expiryDate DESC LIMIT 1`).get(clean) || null;
+}
+
+// 在约记录是否已进入续约窗口：距到期 ≤ RENEW_WINDOW_DAYS 天（含已逾期）
+function isWithinRenewWindow(expiryDate) {
+  const d = daysUntil(expiryDate);
+  return d != null && d <= RENEW_WINDOW_DAYS;
+}
+
+// 建立 / 更新某在约客户对应的「续约跟进」角色。
+// 与在约客户共用同一份客户主档：名称、联系人、产品、金额、到期时间都以在约记录为准。
+function upsertRenewRole(contract, customerId, extra = {}) {
+  const cust = customerById(customerId) || { name: contract.name, contact: contract.contact || '' };
+  const data = {
+    name: cust.name,
+    contact: cust.contact || '',
+    expectedAmount: contract.contractAmount,
+    plan: contract.plan || '',
+    expiryDate: contract.expiryDate,
+  };
+  const existing = db
+    .prepare(
+      `SELECT * FROM prospects WHERE category = 'renew' AND (contractId = ? OR customerId = ?) ORDER BY createdAt ASC LIMIT 1`
+    )
+    .get(contract.id, customerId);
+  if (existing) {
+    db.prepare(
+      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId WHERE id = @id`
+    ).run({ ...data, contractId: contract.id, customerId, id: existing.id });
+    return existing.id;
+  }
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  db.prepare(
+    `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, plan, customerId) VALUES (?, ?, 'negotiation', ?, ?, ?, ?, 'renew', ?, ?, ?, ?)`
+  ).run(
+    id,
+    data.name,
+    data.contact,
+    data.expectedAmount,
+    extra.lastFollowUp ?? '',
+    extra.nextFollowUp ?? null,
+    contract.id,
+    data.expiryDate,
+    data.plan,
+    customerId
+  );
+  return id;
+}
+
+// 自动补建在约记录（用于「不在约」的续约跟进客户）：
+// 产品取该续约角色的产品（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
+// 补建后客户即出现在「在约客户」板块，备注时间线仍挂在共享的客户主档上。
+function createContractFromRenew(renew) {
+  if (!renew.expiryDate) return null;
+  const identity = attachCustomerIdentity('contracts', {
+    customerId: renew.customerId,
+    name: renew.name,
+    contact: renew.contact,
+  });
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  db.prepare(
+    `INSERT INTO contracts (id, name, plan, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    identity.name,
+    renew.plan || DEFAULT_PLAN,
+    identity.contact,
+    Number(renew.expectedAmount) || 0,
+    oneYearBefore(renew.expiryDate),
+    renew.expiryDate,
+    identity.customerId
+  );
+  db.prepare(`UPDATE prospects SET customerId = ? WHERE id = ?`).run(identity.customerId, renew.id);
+  return db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
+}
+
+// 续约跟进同步：新建客户与历史数据共用同一套判断逻辑
+//  A) 在约 → 续约跟进：距到期 ≤ RENEW_WINDOW_DAYS 天（约两个月）或已逾期的在约客户自动生成 / 更新 Renew 跟进
+//  B) 续约跟进 → 在约：先判定每个续约客户「是否在约」——不在约（历史手动新建的）就按表单信息自动补建在约记录，
+//     使其出现在「在约客户」板块；随后只有距到期 ≤ RENEW_WINDOW_DAYS 天的留在续约跟进，
+//     距到期更久的从续约跟进退出（客户继续留在在约客户板块，共享备注时间线不受影响）。
 function syncRenewals() {
-  const contracts = db.prepare(`SELECT * FROM contracts`).all();
-  const active = new Set();
-  for (const c of contracts) {
-    const d = daysUntil(c.expiryDate);
-    if (d != null && d < RENEW_WINDOW_DAYS) {
-      active.add(c.id);
-      const existing = db.prepare(`SELECT * FROM prospects WHERE category = 'renew' AND contractId = ?`).get(c.id);
-      // 复用在约客户的客户主档：续约跟进与在约客户共享同一份名称 / 联系人 / 备注
-      let cid = c.customerId;
-      if (!cid || !customerById(cid)) {
-        const identity = attachCustomerIdentity('prospects', { name: c.name, contact: c.contact });
-        cid = identity.customerId;
-        db.prepare(`UPDATE contracts SET customerId = ?, name = ?, contact = ? WHERE id = ?`).run(cid, c.name, c.contact || '', c.id);
-      }
-      // 客户名唯一：该客户已有手动新建的 Renew 跟进时不再自动补一条，
-      // 否则同一家客户会在续约列表里出现两条同名记录（手动那条保持原样，也不受自动退出影响）
-      if (!existing && db.prepare(`SELECT id FROM prospects WHERE category = 'renew' AND customerId = ?`).get(cid)) {
-        continue;
-      }
-      const cust = customerById(cid) || { name: c.name, contact: c.contact || '' };
-      const data = { name: cust.name, contact: cust.contact || '', expectedAmount: c.contractAmount, expiryDate: c.expiryDate };
-      if (existing) {
-        db.prepare(
-          `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, expiryDate = @expiryDate, customerId = @customerId WHERE id = @id`
-        ).run({ ...data, customerId: cid, id: existing.id });
-      } else {
-        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-        db.prepare(
-          `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, customerId) VALUES (?, ?, 'negotiation', ?, ?, '', NULL, 'renew', ?, ?, ?)`
-        ).run(id, data.name, data.contact, data.expectedAmount, c.id, data.expiryDate, cid);
-      }
+  const summary = { createdContracts: 0, exitedRenew: 0 };
+
+  // A) 在约 → 续约跟进
+  for (const c of db.prepare(`SELECT * FROM contracts`).all()) {
+    if (!isWithinRenewWindow(c.expiryDate)) continue;
+    // 复用在约客户的客户主档：续约跟进与在约客户共享同一份名称 / 联系人 / 备注
+    let cid = c.customerId;
+    if (!cid || !customerById(cid)) {
+      const identity = attachCustomerIdentity('prospects', { name: c.name, contact: c.contact });
+      cid = identity.customerId;
+      db.prepare(`UPDATE contracts SET customerId = ?, name = ?, contact = ? WHERE id = ?`).run(cid, c.name, c.contact || '', c.id);
     }
+    upsertRenewRole(c, cid);
   }
-  // 自动退出：仅删除「由在约客户自动生成」的 Renew 跟进（已关联 contractId），当其关联在约客户不再少于 RENEW_WINDOW_DAYS 天到期时移除该跟进角色。
-  // 备注属于共享的客户主档时间线，这里只删除角色行、不动 customer 与 notes；手动新建的 Renew 客户（contractId 为空）保留不删。
-  const renews = db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all();
-  for (const r of renews) {
-    if (r.contractId && !active.has(r.contractId)) {
+
+  // B) 续约跟进 → 在约判定 + 续约窗口收口
+  for (const r of db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all()) {
+    const before = findContractFor(r);
+    const contract = before || createContractFromRenew(r);
+    if (!contract) {
+      // 既不在约、又没有续约到期时间 → 无法判定，保持原样（表单必填到期时间，正常不会出现）
+      console.warn(`⚠️ 续约跟进客户「${r.name}」缺少续约到期时间，已跳过在约判定`);
+      continue;
+    }
+    if (!before) summary.createdContracts += 1;
+    if (!isWithinRenewWindow(contract.expiryDate)) {
+      // 距到期还有两个多月 → 只在「在约客户」板块，退出续约跟进（备注挂在共享主档，不会丢）
       db.prepare(`DELETE FROM prospects WHERE id = ?`).run(r.id);
+      summary.exitedRenew += 1;
+      continue;
     }
+    upsertRenewRole(contract, contract.customerId || r.customerId, {
+      lastFollowUp: r.lastFollowUp,
+      nextFollowUp: r.nextFollowUp,
+    });
   }
+
+  // 同一家客户在续约跟进里最多一条（历史重复行的收口，保留最早的那条）
+  const seen = new Set();
+  for (const row of db
+    .prepare(`SELECT id, contractId FROM prospects WHERE category = 'renew' AND contractId != '' ORDER BY createdAt ASC, id ASC`)
+    .all()) {
+    if (!seen.has(row.contractId)) {
+      seen.add(row.contractId);
+      continue;
+    }
+    db.prepare(`DELETE FROM prospects WHERE id = ?`).run(row.id);
+    summary.exitedRenew += 1;
+  }
+
+  return summary;
 }
 
 // 健康检查：GET /api/health（需放在泛型 :table 路由之前）
@@ -503,12 +619,122 @@ app.delete('/api/notes/:id', (req, res, next) => {
   }
 });
 
-// ---- 续约跟进同步：到期 < RENEW_WINDOW_DAYS 天的在约客户自动生成/更新 Renew 跟进；不再接近到期自动退出 ----
+// ---- 续约跟进同步：在约 → 续约跟进（距到期 ≤ RENEW_WINDOW_DAYS 天）＋ 续约跟进客户的在约判定与窗口收口 ----
 app.post('/api/sync/renewals', (req, res, next) => {
   try {
-    syncRenewals();
+    const summary = syncRenewals();
     reindexProspectFollowUps();
-    res.json({ ok: true });
+    res.json({ ok: true, renewWindowDays: RENEW_WINDOW_DAYS, ...summary });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- 新建 / 编辑续约客户：服务端统一执行「在约判定」（须注册在泛型 POST /api/:table 之前） ----
+// 1) 判定该客户是否在约（contractId → customerId → 客户名）：
+//    在约 → 表单里的产品 / 金额 / 到期时间同步回在约记录（名称、联系人以客户主档为准）
+//    不在约 → 用表单信息自动补建一条在约记录，客户随即出现在「在约客户」板块
+// 2) 只有距到期 ≤ RENEW_WINDOW_DAYS 天（默认 60 天 ≈ 两个月）的才留在「续约跟进」，
+//    距到期更久的自动退出续约跟进（客户继续留在在约客户板块，共享备注时间线不受影响）
+app.post('/api/renewals', (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const name = normalizeCustomerName(body.name);
+    if (!name) {
+      const e = new Error('缺少必填字段: name');
+      e.status = 400;
+      throw e;
+    }
+    const amount = Number(body.expectedAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      const e = new Error('预计金额必须是大于 0 的数字');
+      e.status = 400;
+      throw e;
+    }
+    if (!body.expiryDate) {
+      const e = new Error('缺少必填字段: expiryDate');
+      e.status = 400;
+      throw e;
+    }
+    // 编辑已有续约跟进角色时先取出原行：用于复用客户主档与沿用跟进日期
+    const existing = body.id ? db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(body.id) : null;
+
+    // 1) 客户主档（客户名唯一 → 同名直接复用同一份名称 / 联系人 / 备注）
+    const identity = attachCustomerIdentity('prospects', {
+      customerId: existing?.customerId,
+      name,
+      contact: body.contact,
+    });
+
+    // 2) 在约判定
+    let contract = findContractFor({
+      contractId: existing?.contractId,
+      customerId: identity.customerId,
+      name: identity.name,
+    });
+    let createdContract = false;
+    const expiryDate = String(body.expiryDate);
+    if (contract) {
+      // 已是在约客户：把表单里的订阅信息同步回在约记录，两个板块保持一致
+      db.prepare(
+        `UPDATE contracts SET name = ?, contact = ?, plan = ?, contractAmount = ?, startDate = ?, expiryDate = ? WHERE id = ?`
+      ).run(
+        identity.name,
+        identity.contact,
+        body.plan || contract.plan || existing?.plan || DEFAULT_PLAN,
+        amount,
+        expiryDate === contract.expiryDate ? contract.startDate : oneYearBefore(expiryDate),
+        expiryDate,
+        contract.id
+      );
+      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
+    } else {
+      // 尚未在约：自动补建在约记录（产品默认第一个、金额取预计金额、开始时间 = 到期时间前一年）
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      db.prepare(
+        `INSERT INTO contracts (id, name, plan, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id,
+        identity.name,
+        body.plan || existing?.plan || DEFAULT_PLAN,
+        identity.contact,
+        amount,
+        oneYearBefore(expiryDate),
+        expiryDate,
+        identity.customerId
+      );
+      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
+      createdContract = true;
+    }
+
+    // 3) 续约窗口判定：距到期 ≤ RENEW_WINDOW_DAYS 天才留在「续约跟进」
+    const within = isWithinRenewWindow(contract.expiryDate);
+    const payload = {
+      ok: true,
+      customerId: identity.customerId,
+      contract,
+      createdContract,
+      removedFromRenew: false,
+      daysLeft: daysUntil(contract.expiryDate),
+      renewWindowDays: RENEW_WINDOW_DAYS,
+      renew: null,
+    };
+    if (!within) {
+      // 距到期还有两个多月：退出续约跟进，只在「在约客户」板块。
+      // 按 contractId / customerId 一并清理（不依赖前端是否回传了续约行 id），避免留下过期角色行。
+      const info = db
+        .prepare(`DELETE FROM prospects WHERE category = 'renew' AND (contractId = ? OR customerId = ?)`)
+        .run(contract.id, identity.customerId);
+      payload.removedFromRenew = info.changes > 0;
+      return res.status(createdContract ? 201 : 200).json(payload);
+    }
+    const renewId = upsertRenewRole(contract, identity.customerId, {
+      lastFollowUp: body.lastFollowUp ?? existing?.lastFollowUp ?? '',
+      nextFollowUp: body.nextFollowUp ?? existing?.nextFollowUp ?? null,
+    });
+    payload.renew = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(renewId);
+    // 201：本次请求新建了在约记录或续约跟进角色；200：仅在原有记录上更新
+    res.status(createdContract || !existing ? 201 : 200).json(payload);
   } catch (err) {
     next(err);
   }
@@ -570,7 +796,9 @@ function assertCustomerRoleFree(table, row, excludeId) {
     if (category === 'new') {
       const active = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?${skip}`).get(cid, ...skipArgs);
       if (active) {
-        throw conflict(`客户「${active.name}」已是在约客户，续约跟进会在临期时自动带出，无需重复新增跟进`);
+        throw conflict(
+          `客户「${active.name}」已是在约客户，系统已把它归入「在约客户」板块；距到期 ≤ ${RENEW_WINDOW_DAYS} 天时会自动带出续约跟进，无需重复新增跟进`
+        );
       }
     }
   }
@@ -757,6 +985,15 @@ app.use((err, req, res, next) => {
 
 // 启动时归档一次超过 1 个月的旧备注
 archiveOldNotes();
+
+// 启动时对「续约跟进」里的所有客户执行一次在约判定（历史数据收口）：
+// 不在约的自动补建在约记录 → 落到「在约客户」板块；距到期超过 RENEW_WINDOW_DAYS 天的从续约跟进退出。
+const renewSummary = syncRenewals();
+if (renewSummary.createdContracts || renewSummary.exitedRenew) {
+  console.log(
+    `✅ 续约跟进已在约判定收口：自动补建在约记录 ${renewSummary.createdContracts} 家，退出续约跟进 ${renewSummary.exitedRenew} 家`
+  );
+}
 
 app.listen(PORT, () => {
   console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${PORT}`);
