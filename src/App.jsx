@@ -151,8 +151,9 @@ export default function App() {
     return { overdueFollow, dueTodayFollow, followDue, overdueContracts, expiring, exp30, todayWork, newTotal, monthNew, newCount };
   }, [contracts, deals, prospects, worklogs]);
 
-  // 侧边导航角标（仅在有数量时显示）
-  const navBadges = { follow: stats.followDue, contracts: stats.expiring, journal: stats.todayWork };
+  // 侧边导航角标（仅在有数量时显示）：只用于「需要处理」的板块——
+  // 今日工作不挂角标，避免刚记一条就被标成待办而误读
+  const navBadges = { follow: stats.followDue, contracts: stats.expiring };
 
   // ---- 续约跟进同步：在约客户距到期 ≤ RENEW_WINDOW_DAYS 天（见 src/data/constants.js）自动带出 Renew 跟进；
   //      不在约的续约客户由服务端补建在约记录，距到期更久的自动退出续约跟进（客户留在在约客户板块） ----
