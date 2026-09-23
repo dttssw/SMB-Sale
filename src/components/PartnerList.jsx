@@ -1,5 +1,6 @@
 import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
+import Icon from './icons.jsx';
 import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 
@@ -29,7 +30,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
     <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
         <div>
-          <h2>🤝 合作伙伴</h2>
+          <h2>合作伙伴</h2>
           <p className="panel-desc">登记合作伙伴，可随时为其提交备注记录（不占用签约 / 金额跟进）</p>
         </div>
         <div className="panel-head-ops">
@@ -40,8 +41,9 @@ export default function PartnerList({ partners, onAdd, onView }) {
             onPerPageChange={setPerPage}
             autoRows={autoRows}
           />
-          <button className="btn btn-primary" onClick={onAdd}>
-            ＋ 新建合作伙伴
+          <button type="button" className="btn btn-primary" onClick={onAdd}>
+            <Icon name="plus" />
+            新建合作伙伴
           </button>
         </div>
       </div>
@@ -54,7 +56,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
           <thead>
             <tr>
               <th>合作伙伴名称</th>
-              <th>联系人</th>
+              <th className="col-opt">联系人</th>
               <th className="ops">操作</th>
             </tr>
           </thead>
@@ -62,13 +64,13 @@ export default function PartnerList({ partners, onAdd, onView }) {
             {paged.map((p) => (
               <tr key={p.id}>
                 <td>
-                  <a className="link-name" onClick={() => onView(p)} title="查看合作伙伴详情">
+                  <button type="button" className="link-name" onClick={() => onView(p)} title={`${p.name} · 查看合作伙伴详情`}>
                     {p.name}
-                  </a>
+                  </button>
                 </td>
-                <td>{p.contact || '—'}</td>
+                <td className="col-opt">{p.contact || '—'}</td>
                 <td className="ops">
-                  <button className="link-btn" onClick={() => onView(p)}>
+                  <button type="button" className="link-btn" onClick={() => onView(p)}>
                     详情
                   </button>
                 </td>
@@ -77,7 +79,13 @@ export default function PartnerList({ partners, onAdd, onView }) {
             {paged.length === 0 && (
               <tr>
                 <td colSpan={3} className="empty">
-                  暂无合作伙伴，点击右上角新建
+                  <div className="empty-state">
+                    <p>暂无合作伙伴，可登记渠道商 / 代理商并随时补备注</p>
+                    <button type="button" className="btn btn-secondary" onClick={onAdd}>
+                      <Icon name="plus" />
+                      新建合作伙伴
+                    </button>
+                  </div>
                 </td>
               </tr>
             )}

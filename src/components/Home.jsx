@@ -22,51 +22,19 @@ function focusLine(stats) {
   return '今天从从容容，正好理一理手头的事，给接下来的冲刺留足空间。';
 }
 
+/**
+ * 总览：固定顺序 问候 → KPI 四列 → 临期在约提醒。
+ * 原来的 hero 装饰层（光球 / 渐变标题 / 两张卡片）已删除，首屏把版面全留给信息。
+ */
 export default function Home({ stats, contracts, today, onView, onRenew }) {
   return (
     <section className="home">
-      <div className="hero">
-        <div className="hero-orb orb-a" />
-        <div className="hero-orb orb-b" />
-        <div className="hero-orb orb-c" />
-        <div className="hero-inner">
-          <div className="hero-eyebrow">
-            <span className="hero-dot" />
-            {today} · 你的销售工作台
-          </div>
-
-          <h1 className="hero-title">
-            {greeting()}，辛苦了 <span className="hero-wave">☕</span>
-          </h1>
-          <p className="hero-lede">欢迎回到 SMB 销售工作台，陪你跑好今天的每一单。</p>
-
-          <div className="hero-moods">
-            <div className="mood-chip positive">
-              <div className="mood-icon">🌱</div>
-              <div>
-                <div className="mood-label">积极的一面</div>
-                <div className="mood-text">
-                  每一次跟进都在悄悄积累复利——坚持的人，运气不会太差。
-                </div>
-              </div>
-            </div>
-
-            <div className="mood-chip weary">
-              <div className="mood-icon">☕</div>
-              <div>
-                <div className="mood-label">疲惫的一面</div>
-                <div className="mood-text">
-                  当然，累是常态。业绩再亮眼，也换不回你的好觉与好心情。
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="hero-focus">
-            <span className="hero-focus-ico">🔎</span>
-            <span>{focusLine(stats)}</span>
-          </div>
-        </div>
+      <div className="home-greet">
+        <p className="home-hello">
+          {greeting()}，辛苦了
+          <span className="home-lede">· 欢迎回到 SMB 销售工作台，陪你跑好今天的每一单。</span>
+        </p>
+        <p className="home-focus">{focusLine(stats)}</p>
       </div>
 
       <div className="kpi-grid">
@@ -74,7 +42,7 @@ export default function Home({ stats, contracts, today, onView, onRenew }) {
           label="今日需跟进"
           value={stats.followDue}
           unit="家"
-          icon="🎯"
+          icon="target"
           tone={stats.followDue > 0 ? 'danger' : 'ok'}
           sub={`逾期 ${stats.overdueFollow} · 今日 ${stats.dueTodayFollow}`}
         />
@@ -82,7 +50,7 @@ export default function Home({ stats, contracts, today, onView, onRenew }) {
           label="临期在约"
           value={stats.expiring}
           unit="家"
-          icon="🔔"
+          icon="bell"
           tone={stats.expiring > 0 ? 'warn' : 'ok'}
           sub={`已到期 ${stats.overdueContracts} · 30天内 ${stats.exp30}`}
         />
@@ -90,15 +58,14 @@ export default function Home({ stats, contracts, today, onView, onRenew }) {
           label="今日记录"
           value={stats.todayWork}
           unit="条"
-          icon="📝"
-          tone="violet"
+          icon="journal"
           sub="今天做了什么"
         />
         <KpiCard
           label="本月成交"
           value={formatMoney(stats.monthNew)}
-          icon="💰"
-          valueClass="money"
+          icon="coins"
+          money
           sub={`累计 ${formatMoney(stats.newTotal)}`}
         />
       </div>

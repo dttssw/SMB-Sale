@@ -1,6 +1,7 @@
 import Badge from './Badge.jsx';
 import ListTools from './ListTools.jsx';
 import Pagination from './Pagination.jsx';
+import Icon from './icons.jsx';
 import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { stageOf, RENEW_WINDOW_DAYS } from '../data/constants.js';
@@ -10,7 +11,7 @@ import { formatMoney } from '../utils/format.js';
 const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
 // 表格只渲染「当前页」的数据：密度、每页条数、高度自适应由 useFitPaging + ListTools 统一处理
-function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
+function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeight }) {
   // 双栏（窄）时省略「上次跟进」，把宽度留给客户与关键日期；单栏全宽时字段更全
   // New：客户 / 阶段 / 预估金额 / [上次跟进] / 下次跟进 / 操作；Renew：客户 / 预估金额 / [上次跟进] / 下次跟进 / 续约到期 / 操作
   const colCount = wide ? 6 : 5;
@@ -27,7 +28,7 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
             <th>客户</th>
             {!isRenew && <th>阶段</th>}
             <th className="num">预估金额</th>
-            {wide && <th className="num">上次跟进</th>}
+            {wide && <th className="num col-opt">上次跟进</th>}
             <th className="num">下次跟进</th>
             {isRenew && <th className="num">续约到期</th>}
             <th className="ops">操作</th>
@@ -41,9 +42,9 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
             return (
               <tr key={p.id}>
                 <td>
-                  <a className="link-name" onClick={() => onView(p)} title="查看客户详情">
+                  <button type="button" className="link-name" onClick={() => onView(p)} title={`${p.name} · 查看客户详情`}>
                     {p.name}
-                  </a>
+                  </button>
                   <div className="cell-sub">{p.contact || '—'}</div>
                 </td>
                 {!isRenew && (
@@ -52,7 +53,7 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
                   </td>
                 )}
                 <td className="num strong">{formatMoney(p.expectedAmount)}</td>
-                {wide && <td className="num">{formatDate(p.lastFollowUp)}</td>}
+                {wide && <td className="num col-opt">{formatDate(p.lastFollowUp)}</td>}
                 <td className="num">
                   {formatDate(p.nextFollowUp)}
                   {next != null && next < 0 && <div className="cell-sub danger-text">逾期 {-next} 天</div>}
@@ -70,7 +71,7 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
                   </td>
                 )}
                 <td className="ops">
-                  <button className="link-btn" onClick={() => onView(p)}>
+                  <button type="button" className="link-btn" onClick={() => onView(p)}>
                     详情
                   </button>
                 </td>
@@ -80,9 +81,17 @@ function ProspectTable({ items, isRenew, wide, onView, scrollRef, maxHeight }) {
           {items.length === 0 && (
             <tr>
               <td colSpan={colCount} className="empty">
-                {isRenew
-                  ? `暂无临期续约客户（距到期 ≤ ${RENEW_WINDOW_DAYS} 天），距到期更久的只显示在「在约客户」板块`
-                  : '暂无跟进中的新客户，点击右上角新增'}
+                <div className="empty-state">
+                  <p>
+                    {isRenew
+                      ? `暂无临期续约客户（距到期 ≤ ${RENEW_WINDOW_DAYS} 天），距到期更久的只显示在「在约客户」板块`
+                      : '暂无跟进中的新客户，点击下方按钮新增'}
+                  </p>
+                  <button type="button" className="btn btn-secondary" onClick={onAdd}>
+                    <Icon name="plus" />
+                    {isRenew ? '新建续约' : '新增跟进'}
+                  </button>
+                </div>
               </td>
             </tr>
           )}
@@ -98,7 +107,7 @@ const VARIANTS = {
     tag: 'NEW',
     isRenew: false,
     desc: '按下一次跟进时间排序，逾期未跟进的客户优先处理',
-    addLabel: '＋ 新增跟进',
+    addLabel: '新增跟进',
   },
   renew: {
     title: '续约跟进',
@@ -106,7 +115,7 @@ const VARIANTS = {
     isRenew: true,
     // 只存放临期客户：距到期 > RENEW_WINDOW_DAYS 的在约客户不进这里，只在「在约客户」板块
     desc: `只放距到期 ≤ ${RENEW_WINDOW_DAYS} 天（约两个月）的在约客户，临期自动带出、续约完成自动退出；更久的只在「在约客户」板块`,
-    addLabel: '＋ 新建续约',
+    addLabel: '新建续约',
   },
 };
 
@@ -164,7 +173,8 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
             onPerPageChange={setPerPage}
             autoRows={autoRows}
           />
-          <button className="btn btn-primary btn-sm" onClick={onAdd}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={onAdd}>
+            <Icon name="plus" />
             {v.addLabel}
           </button>
         </div>
@@ -181,6 +191,7 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
         isRenew={v.isRenew}
         wide={wide}
         onView={onView}
+        onAdd={onAdd}
         scrollRef={scrollRef}
         maxHeight={maxHeight}
       />

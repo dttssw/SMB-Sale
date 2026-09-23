@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import Icon from './icons.jsx';
 import { formatDate, formatNoteDate, formatNoteTime, formatCnDate, isInCurrentWeek, todayStr } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 import { stageOf } from '../data/constants.js';
@@ -139,7 +140,8 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
       <div className="detail-actions">
         <div className="menu">
           <button type="button" className="btn btn-ghost" onClick={() => setMenuOpen((v) => !v)}>
-            ⋯ 更多
+            <Icon name="more" />
+            更多
           </button>
           {menuOpen && (
             <div className="menu-panel">
@@ -193,7 +195,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
 
       <div className="note-section">
         <div className="note-head">
-          <h4>📝 备注记录</h4>
+          <h4>备注记录</h4>
           {notes.length > 0 && (
             <span className="note-head-ops">
               <span className="note-view-toggle">
@@ -228,7 +230,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
             </button>
           </div>
         </form>
-        {noteError && <div className="form-error">⚠️ {noteError}</div>}
+        {noteError && <div className="form-error">{noteError}</div>}
 
         {notesLoading ? (
           <div className="note-empty">加载备注中…</div>
@@ -293,7 +295,8 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
 
         {noteView === 'week' && hiddenCount > 0 && (
           <button type="button" className="work-hidden-note" onClick={() => setNoteView('all')}>
-            💾 更早的 {hiddenCount} 条备注已隐藏 · 点击查看全部
+            <Icon name="chevronDown" />
+            更早的 {hiddenCount} 条备注已隐藏 · 点击查看全部
           </button>
         )}
       </div>

@@ -15,6 +15,7 @@ import RevenuePanel from './components/RevenuePanel.jsx';
 import WorkJournal from './components/WorkJournal.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
+import Icon from './components/icons.jsx';
 import { ContractForm, ProspectForm, RenewForm, PartnerForm, DealForm } from './components/forms.jsx';
 import CustomerDetail from './components/CustomerDetail.jsx';
 
@@ -63,15 +64,15 @@ const FOLLOW_LAYOUTS = [
 // 1280 及以上的窗口，双栏每块仍 ≥470px，表格不会横向溢出，一屏可见客户数也更多
 const AUTO_SPLIT_MIN_WIDTH = 1280;
 
-// 左侧导航板块
+// 左侧导航板块（icon 为 icons.jsx 里的 16px 线性图标名）
 const SECTIONS = [
-  { key: 'home', label: '总览', icon: '🏠', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
-  { key: 'journal', label: '今日工作', icon: '📝', desc: '记下每天做了什么，按天归档、方便复盘' },
-  { key: 'follow', label: '客户跟进', icon: '🎯', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
-  { key: 'contracts', label: '在约客户', icon: '📋', desc: '在约订阅参考清单，临期客户优先处理' },
-  { key: 'revenue', label: '成交金额', icon: '💰', desc: '本月 / 累计成交回顾，心里有底' },
-  { key: 'partners', label: '合作伙伴', icon: '🤝', desc: '渠道商 / 代理商登记，可随时补备注' },
-  { key: 'materials', label: '材料库', icon: '📁', desc: '方案 / 报价 / 合同模板等资料集中管理' },
+  { key: 'home', label: '总览', icon: 'home', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
+  { key: 'journal', label: '今日工作', icon: 'journal', desc: '记下每天做了什么，按天归档、方便复盘' },
+  { key: 'follow', label: '客户跟进', icon: 'target', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
+  { key: 'contracts', label: '在约客户', icon: 'clipboard', desc: '在约订阅参考清单，临期客户优先处理' },
+  { key: 'revenue', label: '成交金额', icon: 'coins', desc: '本月 / 累计成交回顾，心里有底' },
+  { key: 'partners', label: '合作伙伴', icon: 'users', desc: '渠道商 / 代理商登记，可随时补备注' },
+  { key: 'materials', label: '材料库', icon: 'folder', desc: '方案 / 报价 / 合同模板等资料集中管理' },
 ];
 
 export default function App() {
@@ -402,33 +403,32 @@ export default function App() {
   };
 
   const today = formatCnDate(todayStr());
-  const shell = (title, icon, desc, content, badges = {}) => (
+  // 页面骨架：侧栏 + 顶部栏 + 内容 + 页脚（页脚只留一行版本信息，不再暴露技术实现）
+  const shell = (title, desc, content, badges = {}) => (
     <div className="app-shell">
-      <Sidebar sections={SECTIONS} active={active.key} onSelect={setNav} today={today} badges={badges} />
+      <Sidebar sections={SECTIONS} active={active.key} onSelect={setNav} badges={badges} />
       <main className="app-main">
-        <Header today={today} title={title} icon={icon} desc={desc} />
+        <Header today={today} title={title} desc={desc} />
         <div className="app-content">
           {actionError && (
             <div className="db-banner error">
-              <span>⚠️ {actionError}</span>
-              <button className="icon-btn" onClick={() => setActionError('')} aria-label="关闭">
-                ✕
+              <span>{actionError}</span>
+              <button type="button" className="icon-btn" onClick={() => setActionError('')} aria-label="关闭">
+                <Icon name="close" />
               </button>
             </div>
           )}
           {actionNotice && (
             <div className="db-banner ok">
-              <span>✅ {actionNotice}</span>
-              <button className="icon-btn" onClick={() => setActionNotice('')} aria-label="关闭">
-                ✕
+              <span>{actionNotice}</span>
+              <button type="button" className="icon-btn" onClick={() => setActionNotice('')} aria-label="关闭">
+                <Icon name="close" />
               </button>
             </div>
           )}
           {content}
         </div>
-        <footer className="footer">
-          SMB 销售工作台 · 数据保存在本地 SQLite 数据库（server/data/smb.db），上传材料保存在 server/uploads，由 Node API 读写，增删改实时生效
-        </footer>
+        <footer className="footer">SMB 销售工作台 · v1.0.0</footer>
       </main>
     </div>
   );
@@ -436,24 +436,32 @@ export default function App() {
   if (loading) {
     return shell(
       'SMB 销售工作台',
-      '💼',
       '正在连接数据服务',
-      <div className="db-banner">🔄 正在连接数据库，加载数据…</div>
+      <div className="loading-state">
+        <span className="loading-dots">
+          <i />
+          <i />
+          <i />
+        </span>
+        正在连接数据库，加载数据…
+      </div>
     );
   }
 
   if (dbError) {
     return shell(
       'SMB 销售工作台',
-      '💼',
       '数据服务未就绪',
       <div className="db-error">
-        <h3>⚠️ 无法连接数据服务</h3>
+        <h3>
+          <Icon name="alert" size={20} />
+          无法连接数据服务
+        </h3>
         <p>{dbError}</p>
         <p className="db-error-hint">
           请先在终端运行 <code>npm run server</code> 启动后端（默认端口 3001），然后点击重试。
         </p>
-        <button className="btn btn-primary" onClick={retry}>
+        <button type="button" className="btn btn-primary" onClick={retry}>
           重试
         </button>
       </div>
@@ -481,7 +489,7 @@ export default function App() {
         <section className="workspace">
           <div className="workspace-head">
             <div>
-              <h2>🎯 客户跟进</h2>
+              <h2>客户跟进</h2>
               <p className="panel-desc">
                 New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
               </p>
@@ -549,10 +557,15 @@ export default function App() {
 
   return (
     <>
-      {shell(active.label, active.icon, active.desc, content, navBadges)}
+      {shell(active.label, active.desc, content, navBadges)}
 
       {modal && (
-        <Modal title={modalTitle(modal)} onClose={() => setModal(null)} error={actionError}>
+        <Modal
+          title={modalTitle(modal)}
+          onClose={() => setModal(null)}
+          error={actionError}
+          wide={modal.kind !== 'detail'}
+        >
           {modal.kind === 'contract' && (
             <ContractForm
               key={modal.data?.id || 'new'}

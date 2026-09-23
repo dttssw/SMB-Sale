@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
+import Icon from './icons.jsx';
 import { formatDate, monthOf, todayStr } from '../utils/date.js';
 import { formatMoney, sumBy } from '../utils/format.js';
 
@@ -20,11 +21,12 @@ export default function RevenuePanel({ deals, onAdd }) {
     <section className="panel" ref={panelRef}>
       <div className="panel-head">
         <div>
-          <h2>💰 成交金额</h2>
+          <h2>成交金额</h2>
           <p className="panel-desc">回顾即可——New 客户转为在约时自动计入新签金额</p>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={onAdd}>
-          ＋ 记录
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onAdd}>
+          <Icon name="plus" />
+          记录
         </button>
       </div>
 
@@ -66,7 +68,13 @@ export default function RevenuePanel({ deals, onAdd }) {
             {recent.length === 0 && (
               <tr>
                 <td colSpan={3} className="empty">
-                  暂无成交记录
+                  <div className="empty-state">
+                    <p>暂无成交记录，New 客户转为在约时自动计入，也可手动记录一笔</p>
+                    <button type="button" className="btn btn-secondary" onClick={onAdd}>
+                      <Icon name="plus" />
+                      记录成交金额
+                    </button>
+                  </div>
                 </td>
               </tr>
             )}

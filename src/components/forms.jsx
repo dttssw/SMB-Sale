@@ -86,7 +86,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="订阅到期时间" required full>
         <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
       </Field>
-      {error && <div className="form-error">⚠️ {error}</div>}
+      {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
@@ -138,7 +138,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       <Field label="下次跟进日期" full>
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
-      {error && <div className="form-error">⚠️ {error}</div>}
+      {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
@@ -201,7 +201,7 @@ export function RenewForm({ initial, onSave, onCancel }) {
       <Field label="下次跟进日期">
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
-      {error && <div className="form-error">⚠️ {error}</div>}
+      {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
@@ -230,7 +230,7 @@ export function PartnerForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：王经理" />
       </Field>
-      {error && <div className="form-error">⚠️ {error}</div>}
+      {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );
@@ -259,7 +259,7 @@ export function DealForm({ onSave, onCancel }) {
       <Field label="签约日期" required>
         <DatePicker value={form.date} onChange={(v) => setForm((f) => ({ ...f, date: v }))} clearable={false} />
       </Field>
-      {error && <div className="form-error">⚠️ {error}</div>}
+      {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
   );

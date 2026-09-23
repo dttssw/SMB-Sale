@@ -1,33 +1,37 @@
 import { useRef, useState } from 'react';
 import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
+import Icon from './icons.jsx';
 
-// 常见文件类型的展示图标
+/**
+ * 按扩展名归到同一套 16px 线性图标（不再按格式换 emoji）：
+ * doc / pdf / ppt / xls / img / html / md / zip / 其他
+ */
 const FILE_ICONS = {
-  pdf: '📕',
-  ppt: '📊',
-  pptx: '📊',
-  doc: '📝',
-  docx: '📝',
-  wps: '📝',
-  xls: '📈',
-  xlsx: '📈',
-  csv: '📈',
-  html: '🌐',
-  htm: '🌐',
-  md: '📄',
-  txt: '📄',
-  zip: '📦',
-  rar: '📦',
-  '7z': '📦',
-  png: '🖼️',
-  jpg: '🖼️',
-  jpeg: '🖼️',
-  gif: '🖼️',
-  webp: '🖼️',
-  svg: '🖼️',
-  mp4: '🎬',
-  mp3: '🎵',
-  json: '🧩',
+  pdf: 'filePdf',
+  ppt: 'filePpt',
+  pptx: 'filePpt',
+  doc: 'fileDoc',
+  docx: 'fileDoc',
+  wps: 'fileDoc',
+  txt: 'fileDoc',
+  xls: 'fileXls',
+  xlsx: 'fileXls',
+  csv: 'fileXls',
+  html: 'fileHtml',
+  htm: 'fileHtml',
+  md: 'fileMd',
+  zip: 'fileZip',
+  rar: 'fileZip',
+  '7z': 'fileZip',
+  png: 'fileImg',
+  jpg: 'fileImg',
+  jpeg: 'fileImg',
+  gif: 'fileImg',
+  webp: 'fileImg',
+  svg: 'fileImg',
+  mp4: 'fileOther',
+  mp3: 'fileOther',
+  json: 'fileOther',
 };
 
 // 支持浏览器直接新标签内联预览的类型（无脚本执行风险：PDF / 图片）
@@ -100,7 +104,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
       <section className="panel" ref={panelRef}>
         <div className="panel-head">
         <div>
-          <h2>📁 材料库</h2>
+          <h2>材料库</h2>
           <p className="panel-desc">上传产品方案、报价单、合同模板等资料（PDF / PPT / Word / Excel / HTML / SVG / 图片等），支持在线预览与下载（HTML/SVG 以沙箱隔离预览）</p>
         </div>
       </div>
@@ -108,7 +112,12 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
       <div className="material-upload">
         <div className="material-upload-main">
           <button type="button" className="btn btn-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-            {uploading ? '上传中…' : '＋ 选择文件'}
+            {uploading ? '上传中…' : (
+              <>
+                <Icon name="plus" />
+                选择文件
+              </>
+            )}
           </button>
           <input
             ref={fileInputRef}
@@ -123,9 +132,12 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
               <div className="material-pending-list">
                 {files.map((f, i) => (
                   <span key={`${f.name}-${i}`} className="material-pending-item">
-                    {FILE_ICONS[extOf(f.name)] || '📄'} {f.name}
+                    <Icon name={FILE_ICONS[extOf(f.name)] || 'fileOther'} />
+                    <span className="material-name">
+                      <span className="material-filename" title={f.name}>{f.name}</span>
+                    </span>
                     <button type="button" className="icon-btn" onClick={() => removePending(i)} aria-label="移除">
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </span>
                 ))}
@@ -154,9 +166,9 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
 
       {error && (
         <div className="db-banner error">
-          <span>⚠️ {error}</span>
-          <button className="icon-btn" onClick={() => setError('')} aria-label="关闭">
-            ✕
+          <span>{error}</span>
+          <button type="button" className="icon-btn" onClick={() => setError('')} aria-label="关闭">
+            <Icon name="close" />
           </button>
         </div>
       )}
@@ -172,21 +184,23 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
               <th>文件名</th>
               <th>类型</th>
               <th className="num">大小</th>
-              <th>备注</th>
-              <th className="num">上传时间</th>
+              <th className="col-opt">备注</th>
+              <th className="num col-opt">上传时间</th>
               <th className="ops">操作</th>
             </tr>
           </thead>
           <tbody>
             {materials.map((m) => {
               const ext = (m.ext || extOf(m.name)).replace('.', '');
-              const icon = FILE_ICONS[ext] || '📄';
+              const icon = FILE_ICONS[ext] || 'fileOther';
               const previewable = PREVIEWABLE.has(ext) || SANDBOX_PREVIEWABLE.has(ext);
               return (
                 <tr key={m.id}>
                   <td>
                     <div className="cell-main material-name">
-                      <span className="material-icon">{icon}</span>
+                      <span className="material-icon">
+                        <Icon name={icon} />
+                      </span>
                       <span className="material-filename" title={m.name}>
                         {m.name}
                       </span>
@@ -196,13 +210,13 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
                     <span className="plan-tag">{ext ? ext.toUpperCase() : '文件'}</span>
                   </td>
                   <td className="num">{formatSize(m.size)}</td>
-                  <td>
+                  <td className="col-opt">
                     <span className="cell-sub">{m.note || '—'}</span>
                   </td>
-                  <td className="num">{m.createdAt ? m.createdAt.slice(0, 10) : '—'}</td>
+                  <td className="num col-opt">{m.createdAt ? m.createdAt.slice(0, 10) : '—'}</td>
                   <td className="ops">
                     {previewable ? (
-                      <button className="link-btn" type="button" onClick={() => openPreview(m)}>
+                      <button type="button" className="link-btn" onClick={() => openPreview(m)}>
                         预览
                       </button>
                     ) : null}
@@ -214,7 +228,7 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
                     >
                       下载
                     </a>
-                    <button className="link-btn danger" onClick={() => onDelete(m.id)}>
+                    <button type="button" className="link-btn danger" onClick={() => onDelete(m.id)}>
                       删除
                     </button>
                   </td>
@@ -224,7 +238,13 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
             {materials.length === 0 && (
               <tr>
                 <td colSpan={6} className="empty">
-                  材料库为空，点击上方「选择文件」上传资料
+                  <div className="empty-state">
+                    <p>材料库为空，上传方案 / 报价 / 合同模板后可在同一处预览与下载</p>
+                    <button type="button" className="btn btn-secondary" onClick={() => fileInputRef.current?.click()}>
+                      <Icon name="plus" />
+                      选择文件
+                    </button>
+                  </div>
                 </td>
               </tr>
             )}
@@ -242,8 +262,8 @@ export default function MaterialLibrary({ materials, onUpload, onDelete }) {
                 {preview.name}
               </span>
               <span className="preview-tag">沙箱预览</span>
-              <button className="icon-btn" onClick={closePreview} aria-label="关闭">
-                ✕
+              <button type="button" className="icon-btn" onClick={closePreview} aria-label="关闭">
+                <Icon name="close" />
               </button>
             </div>
             <iframe

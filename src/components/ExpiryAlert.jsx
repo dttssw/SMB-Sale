@@ -1,4 +1,5 @@
 import Badge from './Badge.jsx';
+import Icon from './icons.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
@@ -11,6 +12,10 @@ function daysBadge(d) {
   return { label: `${d} 天后到期`, tone: 'info' };
 }
 
+/**
+ * 临期在约提醒：标准面板 + 左侧 3px 状态竖条表达告警级别，
+ * 不再用渐变底 / emoji 图标；状态色只落在 Badge 的 6px 圆点上。
+ */
 export default function ExpiryAlert({ contracts, onView, onRenew }) {
   const expiring = contracts
     .map((c) => ({ ...c, days: daysUntil(c.expiryDate) }))
@@ -19,22 +24,30 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
 
   if (expiring.length === 0) {
     return (
-      <div className="expiry-alert calm">
-        <div className="expiry-alert-icon">✅</div>
-        <div className="expiry-alert-body">
-          <strong>在约客户状态稳定</strong>
-          <span>共 {contracts.length} 家，暂无 {RENEW_WINDOW_DAYS} 天内到期的临期风险，无需额外操心</span>
+      <section className="panel expiry-alert calm">
+        <div className="expiry-alert-head">
+          <span className="expiry-alert-icon">
+            <Icon name="check" />
+          </span>
+          <div>
+            <strong>在约客户状态稳定</strong>
+            <span>
+              共 {contracts.length} 家，暂无 {RENEW_WINDOW_DAYS} 天内到期的临期风险，无需额外操心
+            </span>
+          </div>
         </div>
-      </div>
+      </section>
     );
   }
 
   const overdue = expiring.filter((c) => c.days < 0).length;
 
   return (
-    <section className="expiry-alert">
+    <section className="panel expiry-alert">
       <div className="expiry-alert-head">
-        <div className="expiry-alert-icon">🔔</div>
+        <span className="expiry-alert-icon">
+          <Icon name="bell" />
+        </span>
         <div>
           <strong>在约客户即将到期，快去跟进续约</strong>
           <span>
@@ -48,19 +61,19 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
           return (
             <div key={c.id} className="expiry-alert-item">
               <div className="expiry-alert-item-main">
-                <a className="link-name" onClick={() => onView(c)} title="查看客户详情">
+                <button type="button" className="link-name" onClick={() => onView(c)} title={`${c.name} · 查看客户详情`}>
                   {c.name}
-                </a>
+                </button>
                 <div className="cell-sub">
                   {c.plan} · {formatMoney(c.contractAmount)} · {formatDate(c.expiryDate)} 到期
                 </div>
               </div>
               <Badge tone={b.tone}>{b.label}</Badge>
               <div className="expiry-alert-item-ops">
-                <button className="link-btn" onClick={() => onView(c)}>
+                <button type="button" className="link-btn" onClick={() => onView(c)}>
                   查看
                 </button>
-                <button className="btn btn-primary btn-sm" onClick={() => onRenew(c)}>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => onRenew(c)}>
                   续约
                 </button>
               </div>

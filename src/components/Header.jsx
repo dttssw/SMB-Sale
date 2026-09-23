@@ -1,15 +1,19 @@
-export default function Header({ today, title = 'SMB 销售工作台', icon = '💼', desc = '' }) {
+/**
+ * 顶部栏：56px 扁平条（无 sticky 毛玻璃）。
+ * 左边只有板块标题 + 一句话说明；右边是日期（11px 英文标签 + 13px 值）。
+ */
+export default function Header({ today, title = 'SMB 销售工作台', desc = '' }) {
   return (
     <header className="topbar">
       <div className="topbar-left">
-        <div className="topbar-title">
-          <span className="topbar-icon">{icon}</span>
-          <span>{title}</span>
-        </div>
-        {desc ? <div className="topbar-desc">{desc}</div> : null}
+        <h1 className="topbar-title">{title}</h1>
+        {desc ? <p className="topbar-desc">{desc}</p> : null}
       </div>
       <div className="topbar-right">
-        <span className="today-chip">📅 {today}</span>
+        <span className="topbar-date">
+          <span className="label">Today</span>
+          <span className="value">{today}</span>
+        </span>
       </div>
     </header>
   );

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import useFitScroll, { useViewport } from '../hooks/useViewportFit.js';
+import Icon from './icons.jsx';
 import { formatCnDate, formatNoteTime, isInCurrentWeek, todayStr } from '../utils/date.js';
 
 // 按天分组标题：今天 / 昨天 / 具体日期（含星期）
@@ -73,7 +74,7 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
     <section className="panel panel-journal" ref={panelRef}>
       <div className="panel-head">
         <div>
-          <h2>📝 今日工作记录</h2>
+          <h2>今日工作记录</h2>
           <p className="panel-desc">记录你每天做了什么——谈了哪几家客户、推进了哪些事，回头好复盘</p>
         </div>
         <div className="work-head-ops">
@@ -98,7 +99,8 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
         <div className="work-add-foot">
           <span className="note-form-hint">{today} · 按系统时间归档</span>
           <button type="submit" className="btn btn-primary" disabled={!text.trim()}>
-            ＋ 记一笔
+            <Icon name="plus" />
+            记一笔
           </button>
         </div>
       </form>
@@ -106,10 +108,10 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
       {groups.length === 0 ? (
         <div className="empty-block">
           {view === 'all'
-            ? '还没有任何工作记录，写下一笔开始吧 ✍️'
+            ? '还没有任何工作记录，在上方写下第一笔开始吧'
             : hiddenCount > 0
-              ? '本周还没有记录，写下一笔开始吧 ✍️'
-              : '还没有任何工作记录，写下一笔开始吧 ✍️'}
+              ? '本周还没有记录，在上方写下第一笔开始吧'
+              : '还没有任何工作记录，在上方写下第一笔开始吧'}
         </div>
       ) : (
         <div
@@ -168,7 +170,8 @@ export default function WorkJournal({ entries, onAdd, onRemove, onEdit }) {
 
       {view === 'week' && hiddenCount > 0 && (
         <button type="button" className="work-hidden-note" onClick={() => setView('all')}>
-          💾 更早的 {hiddenCount} 条记录已隐藏 · 点击查看全部
+          <Icon name="chevronDown" />
+          更早的 {hiddenCount} 条记录已隐藏 · 点击查看全部
         </button>
       )}
     </section>

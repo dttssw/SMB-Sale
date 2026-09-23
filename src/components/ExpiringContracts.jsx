@@ -46,7 +46,7 @@ export default function ExpiringContracts({ contracts, onView }) {
     <section className={`panel${dense ? ' is-dense' : ''}`} ref={panelRef}>
       <div className="panel-head">
         <div>
-          <h2>📋 在约客户</h2>
+          <h2>在约客户</h2>
           <p className="panel-desc">在约订阅的参考清单；临期客户已在上方单独提醒，此处稳定客户无需额外操心</p>
         </div>
         <ListTools
@@ -70,7 +70,7 @@ export default function ExpiringContracts({ contracts, onView }) {
           <thead>
             <tr>
               <th>客户名称</th>
-              <th>产品</th>
+              <th className="col-opt">产品</th>
               <th className="num">合同金额</th>
               <th className="num">到期时间</th>
               <th>状态</th>
@@ -83,12 +83,12 @@ export default function ExpiringContracts({ contracts, onView }) {
               return (
                 <tr key={c.id}>
                   <td>
-                    <a className="link-name" onClick={() => onView(c)} title="查看客户详情">
+                    <button type="button" className="link-name" onClick={() => onView(c)} title={`${c.name} · 查看客户详情`}>
                       {c.name}
-                    </a>
+                    </button>
                     <div className="cell-sub">{c.contact || '—'}</div>
                   </td>
-                  <td>
+                  <td className="col-opt">
                     <span className="plan-tag">{c.plan}</span>
                   </td>
                   <td className="num strong">{formatMoney(c.contractAmount)}</td>
@@ -97,7 +97,7 @@ export default function ExpiringContracts({ contracts, onView }) {
                     <Badge tone={st.tone}>{st.label}</Badge>
                   </td>
                   <td className="ops">
-                    <button className="link-btn" onClick={() => onView(c)}>
+                    <button type="button" className="link-btn" onClick={() => onView(c)}>
                       详情
                     </button>
                   </td>
@@ -107,7 +107,9 @@ export default function ExpiringContracts({ contracts, onView }) {
             {paged.length === 0 && (
               <tr>
                 <td colSpan={6} className="empty">
-                  暂无在约客户
+                  <div className="empty-state">
+                    <p>暂无在约客户，新增记录后会自动同步临期提醒与续约跟进</p>
+                  </div>
                 </td>
               </tr>
             )}

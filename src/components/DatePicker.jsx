@@ -1,4 +1,5 @@
 import { todayStr } from '../utils/date.js';
+import Icon from './icons.jsx';
 
 function pad(n) {
   return String(n).padStart(2, '0');
@@ -76,7 +77,7 @@ export default function DatePicker({ value, onChange, clearable = true, yearFrom
       </select>
       {clearable && value && (
         <button type="button" className="datepicker-clear" onClick={() => onChange('')} aria-label="清空日期">
-          ✕
+          <Icon name="close" size={12} />
         </button>
       )}
     </div>

@@ -1,12 +1,20 @@
-export default function Sidebar({ sections, active, onSelect, today, badges = {} }) {
+import Icon from './icons.jsx';
+
+/**
+ * 左侧导航：固定 240px（≤980px 收成 64px 图标条）。
+ * 激活态＝--surface-2 底 + 左侧 2px 反白指示条，不再有渐变与光晕。
+ */
+export default function Sidebar({ sections, active, onSelect, badges = {} }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <div className="logo">💼</div>
-        <div className="sidebar-brand-text">
-          <div className="sidebar-title">SMB 销售工作台</div>
-          <div className="sidebar-sub">Sales Workbench</div>
-        </div>
+        <span className="sidebar-mark">
+          <Icon name="briefcase" size={20} />
+        </span>
+        <span className="sidebar-brand-text">
+          <span className="sidebar-title">SMB 销售工作台</span>
+          <span className="sidebar-sub">Sales Workbench</span>
+        </span>
       </div>
 
       <nav className="sidebar-nav">
@@ -20,22 +28,17 @@ export default function Sidebar({ sections, active, onSelect, today, badges = {}
               className={`nav-item${active === s.key ? ' active' : ''}`}
               onClick={() => onSelect(s.key)}
               title={s.label}
+              aria-current={active === s.key ? 'page' : undefined}
             >
-              <span className="nav-icon">{s.icon}</span>
+              <span className="nav-icon">
+                <Icon name={s.icon} />
+              </span>
               <span className="nav-label">{s.label}</span>
-              {showBadge ? <span className="nav-badge">{count}</span> : null}
+              {showBadge ? <span className="nav-badge">{count > 99 ? '99+' : count}</span> : null}
             </button>
           );
         })}
       </nav>
-
-      <div className="sidebar-foot">
-        <div className="sidebar-foot-chip">
-          <span className="sidebar-foot-ico">📅</span>
-          <span>{today}</span>
-        </div>
-        <div className="sidebar-foot-note">数据存储于本地 SQLite</div>
-      </div>
     </aside>
   );
 }
