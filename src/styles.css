@@ -216,13 +216,15 @@ button, input, select, textarea { font-family: inherit; }
 .follow-head-ops { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 .follow-title { display: flex; align-items: center; gap: var(--s3); }
 .follow-title h2 { font-size: var(--fs-lg); font-weight: 600; }
+/* New / Renew 标签刻意保持同一中性样式：两者是同级分类（不是状态、也不是优先级），
+   区分交给标题文案与面板位置；层级由网格与留白承担，不要再按变体着色。
+   这里一次性写全（含与 badge / pill / plan-tag 共用的方角基础样式，见第 7 节），
+   避免同一个类在两处重复声明同样的盒子属性 */
 .follow-tag {
-  display: inline-flex; align-items: center; height: 22px; padding: 0 var(--s2);
-  font-size: var(--fs-2xs); font-weight: 500; letter-spacing: .04em; text-transform: uppercase;
-  color: var(--fg-muted); border: 1px solid var(--line); border-radius: var(--r-xs);
+  display: inline-flex; align-items: center; gap: var(--s1); height: 22px; padding: 0 var(--s2);
+  font-size: var(--fs-2xs); font-weight: 500; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); color: var(--fg-muted);
 }
-.follow-new .follow-tag { color: var(--fg-muted); }
-.follow-renew .follow-tag { color: var(--fg); border-color: var(--line-strong); }
 .follow-count { font-size: var(--fs-xs); color: var(--fg-muted); }
 .follow-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); flex-wrap: wrap; }
 .follow-desc { font-size: var(--fs-xs); color: var(--fg-muted); }
@@ -265,7 +267,8 @@ button, input, select, textarea { font-family: inherit; }
 .expiry-alert-item.row-clickable:hover { background: var(--surface-2); }
 
 /* ---------- 7. 标签 / 状态 / 圆点 ---------- */
-.badge, .pill, .plan-tag, .follow-tag {
+/* 标签 / 徽章 / 状态胶囊共用的方角基础样式（.follow-tag 自带一份完整声明，见上一节） */
+.badge, .pill, .plan-tag {
   display: inline-flex; align-items: center; gap: var(--s1);
   height: 22px; padding: 0 var(--s2);
   font-size: var(--fs-2xs); font-weight: 500; white-space: nowrap;
