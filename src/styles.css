@@ -108,7 +108,7 @@ button, input, select, textarea { font-family: inherit; }
 
 /* 数字一律 tabular-nums（body 已兜底，关键位再显式声明） */
 .kpi-value, .table .num, .pagination-info, .follow-count, .list-pagesize-auto,
-.mini-stat b, .note-day-count, .work-day-count, .detail-value, .workspace-tools-hint,
+.revenue-v, .revenue-count, .note-day-count, .work-day-count, .detail-value, .workspace-tools-hint,
 .note-time, .work-item-time, .topbar-date .value, .kpi-sub, .cell-sub, .stat-pills { font-variant-numeric: tabular-nums; }
 
 /* ---------- 3. 布局骨架 ---------- */
@@ -291,9 +291,6 @@ button, input, select, textarea { font-family: inherit; }
 .stat-pills { display: inline-flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); flex-wrap: wrap; }
 .danger-text { color: var(--danger); }
 .warn-text { color: var(--warn); }
-.dot { display: inline-block; width: 6px; height: 6px; border-radius: var(--r-dot); background: var(--fg-dim); flex-shrink: 0; }
-.dot-new { background: var(--fg-muted); }
-.dot-renewal { background: var(--ok); }
 
 /* ---------- 8. 按钮：primary / secondary / ghost（各四态） ---------- */
 .btn {
@@ -601,14 +598,34 @@ button, input, select, textarea { font-family: inherit; }
 .detail-label { font-size: var(--fs-xs); color: var(--fg-muted); }
 .detail-value { font-size: var(--fs-md); color: var(--fg); word-break: break-word; }
 
-/* ---------- 16. 成交概览 / 材料库 ---------- */
-.mini-stats { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); flex-wrap: wrap; }
-.mini-stat {
-  display: inline-flex; align-items: center; gap: var(--s2); height: 32px; padding: 0 var(--s3);
-  font-size: var(--fs-xs); color: var(--fg-muted);
-  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+/* ---------- 16. 成交金额 / 材料库 ---------- */
+/* 成交金额：左「数字概览」+ 右「最近成交」两栏。左栏是固定几块数字（不随数据增长），
+   右栏列表高度由 JS 按窗口算出（--fit-max）后内部滚动；两栏顶部对齐 */
+.revenue-split { display: grid; grid-template-columns: minmax(0, 1fr) 640px; gap: var(--s6); align-items: start; }
+.revenue-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+.revenue-num { padding: var(--s4); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.revenue-num.hero { grid-column: 1 / -1; }
+.revenue-k { font-size: var(--fs-xs); color: var(--fg-muted); }
+.revenue-v { margin-top: var(--s2); font-size: var(--fs-lg); font-weight: 600; line-height: var(--lh-title); }
+.revenue-num.hero .revenue-v { font-size: var(--fs-2xl); }
+.revenue-sub { margin-top: var(--s2); font-size: var(--fs-2xs); color: var(--fg-muted); }
+.revenue-list { min-width: 0; }
+.revenue-list-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s3); flex-wrap: wrap; }
+.revenue-list-head h3 {
+  display: inline-flex; align-items: baseline; gap: var(--s2);
+  font-size: var(--fs-2xs); font-weight: 500; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: .04em;
 }
-.mini-stat b { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); }
+.revenue-count { color: var(--fg-dim); }
+/* 成交明细的列宽固定：客户列自适应，日期 / 金额定宽。
+   不加 table-layout: fixed 时，auto 布局会把多余宽度摊给「日期」（它的内容最长），
+   日期又是右对齐，于是日期与客户名被拉开一截、行内信息散开 */
+.revenue-list .table { table-layout: fixed; }
+.revenue-list .table th:nth-child(2), .revenue-list .table td:nth-child(2) { width: 120px; }
+.revenue-list .table th:nth-child(3), .revenue-list .table td:nth-child(3) { width: 140px; }
+/* 定宽后客户名过长会溢出单元格：省略号收口，完整名称放在 title 里
+   （成交记录没有详情页，鼠标悬停是唯一能看到全名的入口） */
+.revenue-list .table td .cell-main { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .material-upload { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s4); flex-wrap: wrap; }
 .material-upload-main { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
 .material-upload-side { display: flex; align-items: center; gap: var(--s2); }
@@ -641,6 +658,11 @@ button, input, select, textarea { font-family: inherit; }
   .workspace-grid:not(.grid-wide) .follow-table-wrap .table td { padding-left: var(--s2); padding-right: var(--s2); }
   .workspace-grid:not(.grid-wide) .follow-table-wrap .table th:first-child,
   .workspace-grid:not(.grid-wide) .follow-table-wrap .table td:first-child { min-width: 130px; max-width: 130px; }
+  /* 成交金额：640px 右栏放不下时改成上下排 —— 三个数字并排一行，列表在下面铺满 */
+  .revenue-split { grid-template-columns: minmax(0, 1fr); gap: var(--s5); }
+  .revenue-nums { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .revenue-num.hero { grid-column: auto; }
+  .revenue-num.hero .revenue-v { font-size: var(--fs-xl); }
 }
 @media (max-width: 1280px) {
   /* 更窄的双栏：续约表要多放一列「续约到期」，客户名列再收到 114px（仍可读 6 个汉字） */
@@ -672,6 +694,7 @@ button, input, select, textarea { font-family: inherit; }
 @media (max-width: 767px) {
   .app-content { padding: var(--s4); }
   .kpi-grid { grid-template-columns: minmax(0, 1fr); }
+  .revenue-nums { grid-template-columns: minmax(0, 1fr); }
   .form { grid-template-columns: minmax(0, 1fr); }
   .detail-grid { grid-template-columns: minmax(0, 1fr); }
   .modal-mask, .preview-overlay { padding: var(--s3); }
