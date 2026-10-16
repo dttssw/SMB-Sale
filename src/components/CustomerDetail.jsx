@@ -27,7 +27,7 @@ function DetailItem({ label, value, full }) {
   );
 }
 
-export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete }) {
+export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete, onNotesChanged }) {
   const isContract = customerType === 'contract';
   const isPartner = customerType === 'partner';
   // 客户主档：跟进 / 在约 共用同一条备注时间线（customerType='customer'，以 customerId 为准）
@@ -75,6 +75,9 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
       setNotes((prev) => [saved, ...prev]);
       setText('');
       setNoteError('');
+      // 服务端已用这条备注重算该客户的「上次 / 下次跟进」，通知外层重新拉列表：
+      // 客户跟进表里的逾期天数、今日需跟进与侧栏角标同步更新，关掉弹窗无需刷新页面
+      await onNotesChanged?.();
     } catch (err) {
       setNoteError(err.message);
     }
@@ -85,6 +88,8 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
     try {
       await api.removeNote(id);
       setNotes((prev) => prev.filter((n) => n.id !== id));
+      // 删除备注会改变「最后一条备注」的归属，外层列表同样重新拉取一次
+      await onNotesChanged?.();
     } catch (err) {
       setNoteError(err.message);
     }

@@ -3,6 +3,7 @@ import { useDbData } from './hooks/useDbData.js';
 import { useViewport } from './hooks/useViewportFit.js';
 import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
+import { hashForSection, sectionFromHash } from './utils/route.js';
 import { sumBy } from './utils/format.js';
 import { PRODUCTS, RENEW_WINDOW_DAYS } from './data/constants.js';
 import Header from './components/Header.jsx';
@@ -75,6 +76,9 @@ const SECTIONS = [
   { key: 'materials', label: '材料库', icon: 'folder', desc: '方案 / 报价 / 合同模板等资料集中管理' },
 ];
 
+// 合法板块 key：校验地址栏哈希用，未知值一律回落到总览（见 utils/route.js）
+const NAV_KEYS = SECTIONS.map((s) => s.key);
+
 export default function App() {
   const contractsDb = useDbData('contracts');
   const prospectsDb = useDbData('prospects');
@@ -93,10 +97,31 @@ export default function App() {
     setActionNotice('');
     setModalState(next);
   };
-  const [nav, setNav] = useState('home');
+  // 当前板块取自地址栏哈希（刷新后仍停在同一板块，见下方 hashchange 监听）
+  const [nav, setNav] = useState(() => sectionFromHash(window.location.hash, NAV_KEYS));
   const [followLayout, setFollowLayout] = useState('auto');
   // 自动检测窗口尺寸：宽高都会实时影响板块大小（见 useViewportFit）
   const viewport = useViewport();
+
+  // ---- 板块路由：左侧导航 ↔ 地址栏哈希（#/follow、#/contracts …）----
+  // 刷新 / 收藏 / 分享链接都会落到同一板块，浏览器前进后退也能在板块间切换
+  useEffect(() => {
+    const onHashChange = () => setNav(sectionFromHash(window.location.hash, NAV_KEYS));
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // 首次打开时把空地址补成当前板块，地址栏始终能读出「我在哪」
+  useEffect(() => {
+    if (!window.location.hash) window.history.replaceState(null, '', hashForSection(nav));
+  }, []);
+
+  // 切换板块：更新界面并写回哈希（浏览器后退可回到上一个板块）
+  const selectNav = (key) => {
+    if (key === nav) return;
+    setNav(key);
+    window.location.hash = hashForSection(key);
+  };
 
   const active = SECTIONS.find((s) => s.key === nav) || SECTIONS[0];
   // 「自动」按窗口宽度决定并排还是单栏全宽：宽屏并排总量更大，窄屏单栏每块更舒展
@@ -345,6 +370,22 @@ export default function App() {
     setModal({ kind, data: customer });
   };
 
+  // 详情弹窗展示的客户：始终取列表里最新的一份——
+  // 备注是可追溯的「上次跟进」来源（服务端按最后一条备注重算），
+  // 让弹窗跟着 prospectsDb / contractsDb 的重新拉取一起刷新，不显示旧日期
+  const detailCustomer = useMemo(() => {
+    if (!modal || modal.kind !== 'detail') return null;
+    const source =
+      modal.customerType === 'contract' ? contracts : modal.customerType === 'partner' ? partners : prospects;
+    return source.find((x) => x.id === modal.customer.id) || modal.customer;
+  }, [modal, contracts, prospects, partners]);
+
+  // 新增 / 删除备注后：服务端已重算该客户的「上次 / 下次跟进」，
+  // 这里把跟进列表重新拉一遍，逾期天数、今日需跟进、侧栏角标随之更新（无需刷新页面）
+  const refreshFollowUps = async () => {
+    await prospectsDb.reload();
+  };
+
   const uploadMaterials = async (files, note) => {
     for (const file of files) {
       await api.uploadMaterial(file, note);
@@ -407,7 +448,7 @@ export default function App() {
   // 页面骨架：侧栏 + 顶部栏 + 内容 + 页脚（页脚只留一行版本信息，不再暴露技术实现）
   const shell = (title, desc, content, badges = {}) => (
     <div className="app-shell">
-      <Sidebar sections={SECTIONS} active={active.key} onSelect={setNav} badges={badges} />
+      <Sidebar sections={SECTIONS} active={active.key} onSelect={selectNav} badges={badges} />
       <main className="app-main">
         <Header today={today} title={title} desc={desc} />
         <div className="app-content">
@@ -610,14 +651,15 @@ export default function App() {
           {modal.kind === 'detail' && (
             <CustomerDetail
               customerType={modal.customerType}
-              customer={modal.customer}
-              onEdit={() => openEditModal(modal.customerType, modal.customer)}
-              onRenew={modal.customerType === 'contract' ? () => renewContract(modal.customer) : undefined}
-              onConvert={modal.customerType === 'prospect' ? () => convertProspect(modal.customer) : undefined}
+              customer={detailCustomer}
+              onNotesChanged={refreshFollowUps}
+              onEdit={() => openEditModal(modal.customerType, detailCustomer)}
+              onRenew={modal.customerType === 'contract' ? () => renewContract(detailCustomer) : undefined}
+              onConvert={modal.customerType === 'prospect' ? () => convertProspect(detailCustomer) : undefined}
               onDelete={() => {
-                if (modal.customerType === 'contract') removeContract(modal.customer.id);
-                else if (modal.customerType === 'prospect') removeProspect(modal.customer.id);
-                else removePartner(modal.customer.id);
+                if (modal.customerType === 'contract') removeContract(detailCustomer.id);
+                else if (modal.customerType === 'prospect') removeProspect(detailCustomer.id);
+                else removePartner(detailCustomer.id);
               }}
             />
           )}
