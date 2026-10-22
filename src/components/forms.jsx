@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
-import { PRODUCTS, RENEW_WINDOW_DAYS, STAGES } from '../data/constants.js';
+import { SKUS, RENEW_WINDOW_DAYS, STAGES } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 
 function Field({ label, required, hint, children, full }) {
@@ -33,7 +33,7 @@ export function ContractForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
-    plan: initial?.plan || PRODUCTS[0],
+    plan: initial?.plan || SKUS[0],
     contact: initial?.contact || '',
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
@@ -65,9 +65,9 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="客户名称" required full hint="客户名唯一：同名客户会共用同一份档案与备注">
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
       </Field>
-      <Field label="产品" required>
+      <Field label="SKU" required>
         <select value={form.plan} onChange={set('plan')}>
-          {PRODUCTS.map((p) => (
+          {SKUS.map((p) => (
             <option key={p} value={p}>
               {p}
             </option>
@@ -98,6 +98,8 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     name: initial?.name || '',
     stage: initial?.stage || 'initial',
     contact: initial?.contact || '',
+    // SKU：客户统一字段（历史跟进记录可能为空，编辑时需补选）
+    plan: initial?.plan || '',
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
@@ -108,6 +110,7 @@ export function ProspectForm({ initial, onSave, onCancel }) {
   const submit = (e) => {
     e.preventDefault();
     if (!form.name.trim()) return setError('请填写客户名称');
+    if (!form.plan) return setError('请选择 SKU');
     if (!(form.expectedAmount > 0)) return setError('请填写预计成交金额');
     onSave({ ...form, name: form.name.trim(), expectedAmount: Number(form.expectedAmount) });
   };
@@ -129,6 +132,16 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：钱总" />
       </Field>
+      <Field label="SKU" required hint="所有客户统一带 SKU，保存后可在客户详情查看">
+        <select value={form.plan} onChange={set('plan')}>
+          <option value="">请选择 SKU</option>
+          {SKUS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+      </Field>
       <Field label="预计金额（元）" required>
         <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
       </Field>
@@ -149,8 +162,8 @@ export function RenewForm({ initial, onSave, onCancel }) {
     id: initial?.id || null,
     name: initial?.name || '',
     contact: initial?.contact || '',
-    // 产品：与在约记录同步（不在约的续约客户会用它自动补建在约记录）
-    plan: initial?.plan || PRODUCTS[0],
+    // SKU：与在约记录同步（不在约的续约客户会用它自动补建在约记录）
+    plan: initial?.plan || SKUS[0],
     expectedAmount: initial?.expectedAmount ?? 0,
     expiryDate: initial?.expiryDate || todayStr(),
     lastFollowUp: initial?.lastFollowUp || todayStr(),
@@ -175,9 +188,9 @@ export function RenewForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
       </Field>
-      <Field label="产品" hint="与在约记录同步：该客户不在约时会用它自动补建在约记录">
+      <Field label="SKU" hint="与在约记录同步：该客户不在约时会用它自动补建在约记录">
         <select value={form.plan} onChange={set('plan')}>
-          {PRODUCTS.map((p) => (
+          {SKUS.map((p) => (
             <option key={p} value={p}>
               {p}
             </option>

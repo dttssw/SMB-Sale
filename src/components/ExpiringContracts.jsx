@@ -78,7 +78,7 @@ export default function ExpiringContracts({ contracts, onView }) {
           <thead>
             <tr>
               <th>客户名称</th>
-              <th className="col-opt">产品</th>
+              <th className="col-opt">SKU</th>
               <th className="num">合同金额</th>
               <th className="num">到期时间</th>
               <th>状态</th>

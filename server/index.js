@@ -260,7 +260,7 @@ function reindexProspectFollowUps() {
 // ⚠️ 需与前端 src/data/constants.js 的 RENEW_WINDOW_DAYS 保持一致（后端不能直接 import 前端模块）
 const RENEW_WINDOW_DAYS = 60;
 
-// 自动补建在约记录时的默认产品（与前端 src/data/constants.js 的 PRODUCTS[0] 保持一致）
+// 自动补建在约记录时的默认 SKU（与前端 src/data/constants.js 的 SKUS[0] 保持一致）
 const DEFAULT_PLAN = '专业版';
 
 // 与前端 src/utils/date.js 的 oneYearBefore 一致：到期时间 − 1 年 + 1 天（订阅默认一年）
@@ -293,7 +293,7 @@ function isWithinRenewWindow(expiryDate) {
 }
 
 // 建立 / 更新某在约客户对应的「续约跟进」角色。
-// 与在约客户共用同一份客户主档：名称、联系人、产品、金额、到期时间都以在约记录为准。
+// 与在约客户共用同一份客户主档：名称、联系人、SKU、金额、到期时间都以在约记录为准。
 function upsertRenewRole(contract, customerId, extra = {}) {
   const cust = customerById(customerId) || { name: contract.name, contact: contract.contact || '' };
   const data = {
@@ -333,7 +333,7 @@ function upsertRenewRole(contract, customerId, extra = {}) {
 }
 
 // 自动补建在约记录（用于「不在约」的续约跟进客户）：
-// 产品取该续约角色的产品（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
+// SKU 取该续约角色的 SKU（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
 // 补建后客户即出现在「在约客户」板块，备注时间线仍挂在共享的客户主档上。
 function createContractFromRenew(renew) {
   if (!renew.expiryDate) return null;
@@ -632,7 +632,7 @@ app.post('/api/sync/renewals', (req, res, next) => {
 
 // ---- 新建 / 编辑续约客户：服务端统一执行「在约判定」（须注册在泛型 POST /api/:table 之前） ----
 // 1) 判定该客户是否在约（contractId → customerId → 客户名）：
-//    在约 → 表单里的产品 / 金额 / 到期时间同步回在约记录（名称、联系人以客户主档为准）
+//    在约 → 表单里的 SKU / 金额 / 到期时间同步回在约记录（名称、联系人以客户主档为准）
 //    不在约 → 用表单信息自动补建一条在约记录，客户随即出现在「在约客户」板块
 // 2) 只有距到期 ≤ RENEW_WINDOW_DAYS 天（默认 60 天 ≈ 两个月）的才留在「续约跟进」，
 //    距到期更久的自动退出续约跟进（客户继续留在在约客户板块，共享备注时间线不受影响）
@@ -689,7 +689,7 @@ app.post('/api/renewals', (req, res, next) => {
       );
       contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
     } else {
-      // 尚未在约：自动补建在约记录（产品默认第一个、金额取预计金额、开始时间 = 到期时间前一年）
+      // 尚未在约：自动补建在约记录（SKU 默认第一个、金额取预计金额、开始时间 = 到期时间前一年）
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
       db.prepare(
         `INSERT INTO contracts (id, name, plan, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`

@@ -1,4 +1,6 @@
-export const PRODUCTS = ['专业版', '旗舰版', 'BE版', 'PE版', 'SaaS专业版', 'SaaS旗舰版', 'Duo', 'Duo Credit'];
+// 客户 SKU（数据库字段仍为 plan，界面统一展示为「SKU」）
+// 所有客户（在约 / 客户跟进 New / 续约跟进 Renew）都带这个字段
+export const SKUS = ['专业版', '旗舰版', 'BE版', 'PE版', 'SaaS专业版', 'SaaS旗舰版', 'Duo', 'Duo Credit'];
 
 export const STAGES = [
   { key: 'initial', label: '初次沟通', tone: 'info' },
@@ -12,8 +14,8 @@ export function stageOf(key) {
   return STAGES.find((s) => s.key === key) || STAGES[0];
 }
 
-export function productOf(key) {
-  return PRODUCTS.includes(key) ? key : PRODUCTS[0];
+export function skuOf(key) {
+  return SKUS.includes(key) ? key : SKUS[0];
 }
 
 // 续约提醒窗口（天）：默认 60 天（约两个月）。订阅到期日距今 ≤ 该天数即视为「临期」。

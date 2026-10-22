@@ -172,7 +172,7 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
         {isContract ? (
           <>
             <DetailItem label="客户名称" value={customer.name} full />
-            <DetailItem label="产品" value={customer.plan} />
+            <DetailItem label="SKU" value={customer.plan || '—'} />
             <DetailItem label="联系人" value={customer.contact || '—'} />
             <DetailItem label="合同金额" value={`${formatMoney(customer.contractAmount)} 元`} />
             <DetailItem label="订阅开始时间" value={formatDate(customer.startDate)} />
@@ -187,6 +187,8 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
           <>
             <DetailItem label="客户名称" value={customer.name} full />
             <DetailItem label="跟进阶段" value={stageOf(customer.stage).label} />
+            {/* SKU：跟进板块（New / Renew）与在约客户共用同一字段，详情里始终可见 */}
+            <DetailItem label="SKU" value={customer.plan || '—'} />
             <DetailItem label="联系人" value={customer.contact || '—'} />
             <DetailItem label="预计金额" value={`${formatMoney(customer.expectedAmount)} 元`} />
             <DetailItem label="上次跟进" value={customer.lastFollowUp ? formatDate(customer.lastFollowUp) : '—'} />

@@ -5,7 +5,7 @@ import { api } from './api.js';
 import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
 import { hashForSection, sectionFromHash } from './utils/route.js';
 import { sumBy } from './utils/format.js';
-import { PRODUCTS, RENEW_WINDOW_DAYS } from './data/constants.js';
+import { SKUS, RENEW_WINDOW_DAYS } from './data/constants.js';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
@@ -46,8 +46,8 @@ const renewNotice = (r) => {
     : `客户「${name}」已归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，已退出「续约跟进」，临期时会自动带出`;
 };
 
-// 编辑续约客户时的表单初值：产品以在约记录为准
-// （历史续约行的 plan 可能为空，若直接用表单默认的第一个产品提交，会把在约记录里的产品覆盖掉）
+// 编辑续约客户时的表单初值：SKU 以在约记录为准
+// （历史续约行的 plan 可能为空，若直接用表单默认的第一个 SKU 提交，会把在约记录里的 SKU 覆盖掉）
 const renewInitial = (row, contracts) => {
   if (!row) return null;
   const contract = contracts.find((c) => c.id === row.contractId);
@@ -352,7 +352,8 @@ export default function App() {
       initial: {
         name: p.name,
         contact: p.contact || '',
-        plan: PRODUCTS[0],
+        // SKU 优先沿用跟进客户的 SKU，避免「转为在约」后 SKU 被重置
+        plan: p.plan || SKUS[0],
         contractAmount: p.expectedAmount || '',
         startDate: todayStr(),
         expiryDate: oneYearFrom(todayStr()),
