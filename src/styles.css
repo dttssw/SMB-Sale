@@ -383,6 +383,16 @@ button, input, select, textarea { font-family: inherit; }
 .modal-error { margin-bottom: var(--s4); }
 .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: var(--s2); margin-top: var(--s1); }
 
+/* 多 SKU 编辑器：默认 1 条，可点击「添加 SKU」继续添加；第一条为主 SKU */
+.sku-editor { display: flex; flex-direction: column; gap: var(--s2); }
+.sku-row { display: flex; align-items: center; gap: var(--s2); }
+.sku-row select { flex: 1 1 auto; min-width: 0; }
+.sku-remove { flex-shrink: 0; }
+.sku-editor-foot { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+/* SKU 标签组（客户详情 / 在约客户列表） */
+.sku-tags { display: inline-flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.sku-more { color: var(--fg-dim); }
+
 .datepicker { display: flex; align-items: center; gap: var(--s2); width: 100%; }
 .datepicker select { flex: 1 1 0; min-width: 0; padding: 0 var(--s1); }
 .datepicker select:first-child { flex: 1.6 1 0; }

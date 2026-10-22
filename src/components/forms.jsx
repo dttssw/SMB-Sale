@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
+import { cleanSkus, skusOf } from '../utils/sku.js';
 import { SKUS, RENEW_WINDOW_DAYS, STAGES } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
+import Icon from './icons.jsx';
 
 function Field({ label, required, hint, children, full }) {
   return (
@@ -29,11 +31,70 @@ function Actions({ onCancel }) {
   );
 }
 
+// 多 SKU 编辑：默认 1 条；有多条时逐条「添加 SKU」，多于一条时任意一条都可移除。
+// 第一条即主 SKU（数据库 plan 字段），其余存入 skus 列表。
+function SkuEditor({ value, onChange }) {
+  const list = value && value.length ? value : [''];
+  const picked = list.filter(Boolean);
+  const update = (index, sku) => onChange(list.map((v, i) => (i === index ? sku : v)));
+  const add = () => onChange([...list, '']);
+  const remove = (index) => onChange(list.filter((_, i) => i !== index));
+
+  return (
+    <div className="sku-editor">
+      {list.map((sku, index) => {
+        const others = list.filter((v, i) => i !== index && v);
+        return (
+          <div className="sku-row" key={index}>
+            <select
+              value={sku}
+              onChange={(e) => update(index, e.target.value)}
+              aria-label={`SKU ${index + 1}`}
+            >
+              <option value="">{index === 0 ? '请选择 SKU' : '请选择 SKU（可选）'}</option>
+              {SKUS.map((s) => (
+                <option key={s} value={s} disabled={others.includes(s)}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            {list.length > 1 && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm sku-remove"
+                onClick={() => remove(index)}
+                title="移除这条 SKU"
+              >
+                移除
+              </button>
+            )}
+          </div>
+        );
+      })}
+      <div className="sku-editor-foot">
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={add}
+          disabled={list.length >= SKUS.length}
+        >
+          <Icon name="plus" />
+          添加 SKU
+        </button>
+        <span className="field-hint">已选 {picked.length} 条，第一条为主 SKU</span>
+      </div>
+    </div>
+  );
+}
+
+const skuFieldHint = '默认 1 条；一个客户可以有多条 SKU，点击「添加 SKU」继续添加';
+
 export function ContractForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
-    plan: initial?.plan || SKUS[0],
+    // 默认 1 条 SKU；编辑时读取 skus（历史数据回退为 plan）
+    skus: initial ? skusOf(initial) : [SKUS[0]],
     contact: initial?.contact || '',
     contractAmount: initial?.contractAmount ?? 0,
     startDate: initial?.startDate || todayStr(),
@@ -54,10 +115,18 @@ export function ContractForm({ initial, onSave, onCancel }) {
 
   const submit = (e) => {
     e.preventDefault();
+    const skus = cleanSkus(form.skus);
     if (!form.name.trim()) return setError('请填写客户名称');
+    if (!skus.length) return setError('请选择 SKU');
     if (!form.expiryDate) return setError('请选择订阅到期时间');
     if (!(form.contractAmount > 0)) return setError('请填写合同金额');
-    onSave({ ...form, name: form.name.trim(), contractAmount: Number(form.contractAmount) });
+    onSave({
+      ...form,
+      skus,
+      plan: skus[0],
+      name: form.name.trim(),
+      contractAmount: Number(form.contractAmount),
+    });
   };
 
   return (
@@ -65,14 +134,8 @@ export function ContractForm({ initial, onSave, onCancel }) {
       <Field label="客户名称" required full hint="客户名唯一：同名客户会共用同一份档案与备注">
         <input value={form.name} onChange={set('name')} placeholder="如：杭州云启科技有限公司" />
       </Field>
-      <Field label="SKU" required>
-        <select value={form.plan} onChange={set('plan')}>
-          {SKUS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
+      <Field label="SKU" required full hint={skuFieldHint}>
+        <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
@@ -98,8 +161,8 @@ export function ProspectForm({ initial, onSave, onCancel }) {
     name: initial?.name || '',
     stage: initial?.stage || 'initial',
     contact: initial?.contact || '',
-    // SKU：客户统一字段（历史跟进记录可能为空，编辑时需补选）
-    plan: initial?.plan || '',
+    // SKU：客户统一字段，默认 1 条（历史跟进记录可能为空，编辑时需补选）
+    skus: skusOf(initial),
     expectedAmount: initial?.expectedAmount ?? 0,
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
@@ -109,10 +172,17 @@ export function ProspectForm({ initial, onSave, onCancel }) {
 
   const submit = (e) => {
     e.preventDefault();
+    const skus = cleanSkus(form.skus);
     if (!form.name.trim()) return setError('请填写客户名称');
-    if (!form.plan) return setError('请选择 SKU');
+    if (!skus.length) return setError('请选择 SKU');
     if (!(form.expectedAmount > 0)) return setError('请填写预计成交金额');
-    onSave({ ...form, name: form.name.trim(), expectedAmount: Number(form.expectedAmount) });
+    onSave({
+      ...form,
+      skus,
+      plan: skus[0],
+      name: form.name.trim(),
+      expectedAmount: Number(form.expectedAmount),
+    });
   };
 
   return (
@@ -132,15 +202,8 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：钱总" />
       </Field>
-      <Field label="SKU" required hint="所有客户统一带 SKU，保存后可在客户详情查看">
-        <select value={form.plan} onChange={set('plan')}>
-          <option value="">请选择 SKU</option>
-          {SKUS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
+      <Field label="SKU" required full hint={skuFieldHint}>
+        <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
       <Field label="预计金额（元）" required>
         <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />
@@ -163,7 +226,7 @@ export function RenewForm({ initial, onSave, onCancel }) {
     name: initial?.name || '',
     contact: initial?.contact || '',
     // SKU：与在约记录同步（不在约的续约客户会用它自动补建在约记录）
-    plan: initial?.plan || SKUS[0],
+    skus: initial ? skusOf(initial) : [SKUS[0]],
     expectedAmount: initial?.expectedAmount ?? 0,
     expiryDate: initial?.expiryDate || todayStr(),
     lastFollowUp: initial?.lastFollowUp || todayStr(),
@@ -174,10 +237,18 @@ export function RenewForm({ initial, onSave, onCancel }) {
 
   const submit = (e) => {
     e.preventDefault();
+    const skus = cleanSkus(form.skus);
     if (!form.name.trim()) return setError('请填写客户名称');
+    if (!skus.length) return setError('请选择 SKU');
     if (!(form.expectedAmount > 0)) return setError('请填写预计成交金额');
     if (!form.expiryDate) return setError('请选择续约到期时间');
-    onSave({ ...form, name: form.name.trim(), expectedAmount: Number(form.expectedAmount) });
+    onSave({
+      ...form,
+      skus,
+      plan: skus[0],
+      name: form.name.trim(),
+      expectedAmount: Number(form.expectedAmount),
+    });
   };
 
   return (
@@ -188,14 +259,8 @@ export function RenewForm({ initial, onSave, onCancel }) {
       <Field label="联系人">
         <input value={form.contact} onChange={set('contact')} placeholder="如：张经理" />
       </Field>
-      <Field label="SKU" hint="与在约记录同步：该客户不在约时会用它自动补建在约记录">
-        <select value={form.plan} onChange={set('plan')}>
-          {SKUS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
+      <Field label="SKU" required full hint={`${skuFieldHint}；与在约记录同步，该客户不在约时会用它自动补建在约记录`}>
+        <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
       <Field label="预计金额（元）" required>
         <input type="number" min="0" step="any" value={form.expectedAmount} onChange={set('expectedAmount')} />

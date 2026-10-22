@@ -54,8 +54,8 @@ app.use((req, res, next) => {
 const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
-  contracts: ['id', 'name', 'plan', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'customerId'],
+  contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
   worklogs: ['id', 'content', 'date'],
@@ -84,6 +84,16 @@ function sanitize(table, body) {
   const row = {};
   for (const key of allowed) {
     if (body[key] !== undefined && body[key] !== null) row[key] = body[key];
+  }
+  // 多 SKU：前端传 skus 数组（历史接口可能只传 plan）→ 统一存 JSON 数组文本，
+  // 并把第一条写回 plan，保证续约 / 在约等既有逻辑继续以主 SKU 为准。
+  if (table === 'contracts' || table === 'prospects') {
+    const list = parseSkuList(row.skus !== undefined ? row.skus : row.plan);
+    const effective = list.length ? list : parseSkuList(row.plan);
+    if (effective.length) {
+      row.skus = JSON.stringify(effective);
+      row.plan = effective[0];
+    }
   }
   for (const key of REQUIRED[table]) {
     if (row[key] === undefined || row[key] === null || row[key] === '') {
@@ -263,6 +273,55 @@ const RENEW_WINDOW_DAYS = 60;
 // 自动补建在约记录时的默认 SKU（与前端 src/data/constants.js 的 SKUS[0] 保持一致）
 const DEFAULT_PLAN = '专业版';
 
+// ---- 多 SKU 工具 ----
+// 数据库 skus 列存 JSON 数组文本，plan 始终保留第一条（主 SKU）；
+// 接口统一返回数组，前端表单 / 详情直接用，不需要再解析字符串。
+function parseSkuList(value) {
+  if (Array.isArray(value)) {
+    const out = [];
+    for (const item of value) {
+      const sku = String(item ?? '').trim();
+      if (sku && !out.includes(sku)) out.push(sku);
+    }
+    return out;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parseSkuList(parsed);
+      if (typeof parsed === 'string') return parseSkuList([parsed]);
+    } catch {
+      // 历史单值（如 "Duo"）直接当作一条 SKU
+      return [text];
+    }
+  }
+  return [];
+}
+
+// 行记录的完整 SKU 列表：优先 skus，历史数据回退为 [plan]
+function skuListOf(record) {
+  const list = parseSkuList(record?.skus);
+  return list.length ? list : parseSkuList(record?.plan);
+}
+
+// 接口输出：skus 一律是数组
+function withSkus(row) {
+  if (!row) return row;
+  return { ...row, skus: skuListOf(row) };
+}
+
+// 只对带 SKU 的角色行（在约 / 跟进）做输出转换
+function withRoleSkus(table, row) {
+  return table === 'contracts' || table === 'prospects' ? withSkus(row) : row;
+}
+
+// 落库文本（JSON 数组），供续约同步 / 补建在约时复制 SKU 列表
+function skuTextOf(record) {
+  return JSON.stringify(skuListOf(record));
+}
+
 // 与前端 src/utils/date.js 的 oneYearBefore 一致：到期时间 − 1 年 + 1 天（订阅默认一年）
 function oneYearBefore(dateStr) {
   const [y, m, d] = String(dateStr).split('-').map(Number);
@@ -301,6 +360,7 @@ function upsertRenewRole(contract, customerId, extra = {}) {
     contact: cust.contact || '',
     expectedAmount: contract.contractAmount,
     plan: contract.plan || '',
+    skus: skuTextOf(contract),
     expiryDate: contract.expiryDate,
   };
   const existing = db
@@ -310,13 +370,13 @@ function upsertRenewRole(contract, customerId, extra = {}) {
     .get(contract.id, customerId);
   if (existing) {
     db.prepare(
-      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId WHERE id = @id`
+      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, skus = @skus, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId WHERE id = @id`
     ).run({ ...data, contractId: contract.id, customerId, id: existing.id });
     return existing.id;
   }
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   db.prepare(
-    `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, plan, customerId) VALUES (?, ?, 'negotiation', ?, ?, ?, ?, 'renew', ?, ?, ?, ?)`
+    `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, plan, skus, customerId) VALUES (?, ?, 'negotiation', ?, ?, ?, ?, 'renew', ?, ?, ?, ?, ?)`
   ).run(
     id,
     data.name,
@@ -327,13 +387,14 @@ function upsertRenewRole(contract, customerId, extra = {}) {
     contract.id,
     data.expiryDate,
     data.plan,
+    data.skus,
     customerId
   );
   return id;
 }
 
 // 自动补建在约记录（用于「不在约」的续约跟进客户）：
-// SKU 取该续约角色的 SKU（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
+// SKU 列表取该续约角色的 SKU（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
 // 补建后客户即出现在「在约客户」板块，备注时间线仍挂在共享的客户主档上。
 function createContractFromRenew(renew) {
   if (!renew.expiryDate) return null;
@@ -342,13 +403,16 @@ function createContractFromRenew(renew) {
     name: renew.name,
     contact: renew.contact,
   });
+  const skus = skuListOf(renew);
+  const plan = skus[0] || DEFAULT_PLAN;
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   db.prepare(
-    `INSERT INTO contracts (id, name, plan, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO contracts (id, name, plan, skus, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     identity.name,
-    renew.plan || DEFAULT_PLAN,
+    plan,
+    JSON.stringify(skus.length ? skus : [plan]),
     identity.contact,
     Number(renew.expectedAmount) || 0,
     oneYearBefore(renew.expiryDate),
@@ -658,6 +722,8 @@ app.post('/api/renewals', (req, res, next) => {
     }
     // 编辑已有续约跟进角色时先取出原行：用于复用客户主档与沿用跟进日期
     const existing = body.id ? db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(body.id) : null;
+    // 多 SKU：表单传完整列表（skus），历史接口只传 plan 时按单条处理
+    const requestedSkus = parseSkuList(body.skus !== undefined ? body.skus : body.plan);
 
     // 1) 客户主档（客户名唯一 → 同名直接复用同一份名称 / 联系人 / 备注）
     const identity = attachCustomerIdentity('prospects', {
@@ -675,13 +741,23 @@ app.post('/api/renewals', (req, res, next) => {
     let createdContract = false;
     const expiryDate = String(body.expiryDate);
     if (contract) {
-      // 已是在约客户：把表单里的订阅信息同步回在约记录，两个板块保持一致
+      // 已是在约客户：把表单里的订阅信息（含 SKU 列表）同步回在约记录，两个板块保持一致
+      const currentSkus = skuListOf(contract);
+      const skus = requestedSkus.length
+        ? requestedSkus
+        : currentSkus.length
+          ? currentSkus
+          : parseSkuList(existing?.plan).length
+            ? parseSkuList(existing?.plan)
+            : [DEFAULT_PLAN];
+      const plan = skus[0] || DEFAULT_PLAN;
       db.prepare(
-        `UPDATE contracts SET name = ?, contact = ?, plan = ?, contractAmount = ?, startDate = ?, expiryDate = ? WHERE id = ?`
+        `UPDATE contracts SET name = ?, contact = ?, plan = ?, skus = ?, contractAmount = ?, startDate = ?, expiryDate = ? WHERE id = ?`
       ).run(
         identity.name,
         identity.contact,
-        body.plan || contract.plan || existing?.plan || DEFAULT_PLAN,
+        plan,
+        JSON.stringify(skus),
         amount,
         expiryDate === contract.expiryDate ? contract.startDate : oneYearBefore(expiryDate),
         expiryDate,
@@ -689,14 +765,21 @@ app.post('/api/renewals', (req, res, next) => {
       );
       contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
     } else {
-      // 尚未在约：自动补建在约记录（SKU 默认第一个、金额取预计金额、开始时间 = 到期时间前一年）
+      // 尚未在约：自动补建在约记录（SKU 沿用表单列表、缺省第一个，金额取预计金额、开始时间 = 到期时间前一年）
+      const skus = requestedSkus.length
+        ? requestedSkus
+        : parseSkuList(existing?.plan).length
+          ? parseSkuList(existing?.plan)
+          : [DEFAULT_PLAN];
+      const plan = skus[0] || DEFAULT_PLAN;
       const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
       db.prepare(
-        `INSERT INTO contracts (id, name, plan, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO contracts (id, name, plan, skus, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         identity.name,
-        body.plan || existing?.plan || DEFAULT_PLAN,
+        plan,
+        JSON.stringify(skus),
         identity.contact,
         amount,
         oneYearBefore(expiryDate),
@@ -712,7 +795,7 @@ app.post('/api/renewals', (req, res, next) => {
     const payload = {
       ok: true,
       customerId: identity.customerId,
-      contract,
+      contract: withSkus(contract),
       createdContract,
       removedFromRenew: false,
       daysLeft: daysUntil(contract.expiryDate),
@@ -732,7 +815,7 @@ app.post('/api/renewals', (req, res, next) => {
       lastFollowUp: body.lastFollowUp ?? existing?.lastFollowUp ?? '',
       nextFollowUp: body.nextFollowUp ?? existing?.nextFollowUp ?? null,
     });
-    payload.renew = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(renewId);
+    payload.renew = withSkus(db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(renewId));
     // 201：本次请求新建了在约记录或续约跟进角色；200：仅在原有记录上更新
     res.status(createdContract || !existing ? 201 : 200).json(payload);
   } catch (err) {
@@ -756,7 +839,8 @@ app.get('/api/:table', (req, res, next) => {
   const table = req.params.table;
   if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
   try {
-    res.json(db.prepare(`SELECT * FROM ${table} ORDER BY createdAt DESC`).all());
+    const rows = db.prepare(`SELECT * FROM ${table} ORDER BY createdAt DESC`).all();
+    res.json(table === 'contracts' || table === 'prospects' ? rows.map(withSkus) : rows);
   } catch (err) {
     next(err);
   }
@@ -832,7 +916,7 @@ app.post('/api/:table', (req, res, next) => {
     const body = req.body || {};
     // 先做字段校验（缺必填字段直接 400），再解析客户主档，避免校验失败时留下一条空档
     const row = prepareCustomerRole(table, body);
-    res.status(201).json(insertRow(table, row));
+    res.status(201).json(withRoleSkus(table, insertRow(table, row)));
   } catch (err) {
     next(err);
   }
@@ -860,7 +944,7 @@ app.post('/api/prospects/:id/convert', (req, res, next) => {
       insertRow('contracts', row);
     });
     convert();
-    res.status(201).json(findRow('contracts', rowId));
+    res.status(201).json(withSkus(findRow('contracts', rowId)));
   } catch (err) {
     next(err);
   }
@@ -883,7 +967,7 @@ app.put('/api/:table/:id', (req, res, next) => {
       .map((k) => `${k} = @${k}`)
       .join(', ');
     db.prepare(`UPDATE ${table} SET ${sets} WHERE id = @id`).run(row);
-    res.json(findRow(table, id));
+    res.json(withRoleSkus(table, findRow(table, id)));
   } catch (err) {
     next(err);
   }

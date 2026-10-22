@@ -6,6 +6,7 @@ import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, t
 import { hashForSection, sectionFromHash } from './utils/route.js';
 import { sumBy } from './utils/format.js';
 import { SKUS, RENEW_WINDOW_DAYS } from './data/constants.js';
+import { skusOf } from './utils/sku.js';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
@@ -46,12 +47,13 @@ const renewNotice = (r) => {
     : `客户「${name}」已归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，已退出「续约跟进」，临期时会自动带出`;
 };
 
-// 编辑续约客户时的表单初值：SKU 以在约记录为准
-// （历史续约行的 plan 可能为空，若直接用表单默认的第一个 SKU 提交，会把在约记录里的 SKU 覆盖掉）
+// 编辑续约客户时的表单初值：SKU 列表以在约记录为准
+// （历史续约行的 skus / plan 可能为空，若直接用表单默认的第一条 SKU 提交，会把在约记录里的 SKU 覆盖掉）
 const renewInitial = (row, contracts) => {
   if (!row) return null;
   const contract = contracts.find((c) => c.id === row.contractId);
-  return contract?.plan ? { ...row, plan: contract.plan } : row;
+  const skus = skusOf(contract);
+  return skus.length ? { ...row, plan: skus[0], skus } : row;
 };
 
 // 客户跟进板块的展示尺寸：自动（按窗口宽度选）/ 双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
@@ -346,14 +348,16 @@ export default function App() {
 
   // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人；订阅默认一年）
   const convertProspect = (p) => {
+    const skus = skusOf(p);
     setModal({
       kind: 'convert',
       data: p,
       initial: {
         name: p.name,
         contact: p.contact || '',
-        // SKU 优先沿用跟进客户的 SKU，避免「转为在约」后 SKU 被重置
-        plan: p.plan || SKUS[0],
+        // SKU 优先沿用跟进客户的 SKU 列表，避免「转为在约」后 SKU 被重置
+        plan: skus[0] || SKUS[0],
+        skus: skus.length ? skus : [SKUS[0]],
         contractAmount: p.expectedAmount || '',
         startDate: todayStr(),
         expiryDate: oneYearFrom(todayStr()),

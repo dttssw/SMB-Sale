@@ -51,6 +51,7 @@ db.exec(`
     startDate      TEXT NOT NULL,
     expiryDate     TEXT NOT NULL,
     note           TEXT DEFAULT '',
+    skus           TEXT DEFAULT '[]',   -- SKU 列表（JSON 数组文本，plan 保留第一条作为主 SKU）
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -66,6 +67,7 @@ db.exec(`
     contractId     TEXT DEFAULT '',      -- renew 跟进所关联的在约客户 id
     expiryDate     TEXT,                 -- renew 跟进对应的在约到期时间（冗余，便于展示）
     plan           TEXT DEFAULT '',      -- renew 跟进的 SKU（与在约记录同步，用于自动补建在约）
+    skus           TEXT DEFAULT '[]',    -- SKU 列表（JSON 数组文本，plan 为第一条）
     note           TEXT DEFAULT '',
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -177,6 +179,29 @@ if (!prospectCols.includes('contractId')) db.exec(`ALTER TABLE prospects ADD COL
 if (!prospectCols.includes('expiryDate')) db.exec(`ALTER TABLE prospects ADD COLUMN expiryDate TEXT`);
 // 迁移：续约跟进角色记录 SKU。不在约的续约客户会被自动补建在约记录，SKU 即取自这里（幂等）
 if (!prospectCols.includes('plan')) db.exec(`ALTER TABLE prospects ADD COLUMN plan TEXT DEFAULT ''`);
+
+// 迁移：一个客户可以配置多条 SKU —— 在约 / 跟进记录增加 skus（JSON 数组文本），
+// plan 继续保留第一条作为主 SKU，现有续约判定 / 金额逻辑沿用 plan，不受影响。
+for (const table of ['contracts', 'prospects']) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes('skus')) db.exec(`ALTER TABLE ${table} ADD COLUMN skus TEXT DEFAULT '[]'`);
+}
+// 回填：历史记录只有单个 plan，补成 [plan]，让表单与详情拿到完整列表（幂等）
+for (const table of ['contracts', 'prospects']) {
+  const rows = db.prepare(`SELECT id, plan, skus FROM ${table}`).all();
+  for (const row of rows) {
+    let list = [];
+    try {
+      const parsed = JSON.parse(row.skus || '[]');
+      if (Array.isArray(parsed)) list = parsed.filter(Boolean);
+    } catch {
+      list = [];
+    }
+    if (!list.length && row.plan) {
+      db.prepare(`UPDATE ${table} SET skus = ? WHERE id = ?`).run(JSON.stringify([row.plan]), row.id);
+    }
+  }
+}
 
 // 迁移：把「同日合并」的历史备注拆分成独立备注，让每条备注都能单独编辑 / 删除（与「今日工作记录」一致）。
 // 旧版本会把同一天（本地时区）的多条备注合并成一条，以 [HH:MM] 作为时间标记；新版本取消合并、每条备注独立成行，

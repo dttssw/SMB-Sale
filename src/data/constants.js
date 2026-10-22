@@ -1,6 +1,16 @@
-// 客户 SKU（数据库字段仍为 plan，界面统一展示为「SKU」）
-// 所有客户（在约 / 客户跟进 New / 续约跟进 Renew）都带这个字段
-export const SKUS = ['专业版', '旗舰版', 'BE版', 'PE版', 'SaaS专业版', 'SaaS旗舰版', 'Duo', 'Duo Credit'];
+// 客户 SKU（数据库字段 plan 保留第一条作为主 SKU，完整列表存于 skus 字段）
+// 所有客户（在约 / 客户跟进 New / 续约跟进 Renew）都带这个字段，且可配置多条
+export const SKUS = [
+  '专业版',
+  '旗舰版',
+  'BE版',
+  'PE版',
+  'SaaS专业版',
+  'SaaS旗舰版',
+  'Duo',
+  'Duo Credit',
+  'PS人天服务',
+];
 
 export const STAGES = [
   { key: 'initial', label: '初次沟通', tone: 'info' },

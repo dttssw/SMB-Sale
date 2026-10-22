@@ -2,6 +2,7 @@ import Badge from './Badge.jsx';
 import Icon from './icons.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
+import { skusOf } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 function daysBadge(d) {
@@ -65,6 +66,7 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
       <div className="expiry-alert-list">
         {expiring.map((c) => {
           const b = daysBadge(c.days);
+          const skuText = skusOf(c).join(' / ') || '—';
           return (
             <div key={c.id} className="expiry-alert-item row-clickable" onClick={(e) => handleRowClick(e, c)}>
               <div className="expiry-alert-item-main">
@@ -72,7 +74,7 @@ export default function ExpiryAlert({ contracts, onView, onRenew }) {
                   {c.name}
                 </button>
                 <div className="cell-sub">
-                  {c.plan} · {formatMoney(c.contractAmount)} · {formatDate(c.expiryDate)} 到期
+                  {skuText} · {formatMoney(c.contractAmount)} · {formatDate(c.expiryDate)} 到期
                 </div>
               </div>
               <Badge tone={b.tone}>{b.label}</Badge>

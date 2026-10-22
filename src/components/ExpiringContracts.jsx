@@ -6,6 +6,7 @@ import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
+import { skusOf } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
@@ -88,6 +89,7 @@ export default function ExpiringContracts({ contracts, onView }) {
           <tbody>
             {paged.map((c) => {
               const st = statusOf(c.expiryDate);
+              const skus = skusOf(c);
               return (
                 <tr key={c.id} className="row-clickable" onClick={(e) => handleRowClick(e, c)}>
                   <td>
@@ -97,7 +99,14 @@ export default function ExpiringContracts({ contracts, onView }) {
                     <div className="cell-sub">{c.contact || '—'}</div>
                   </td>
                   <td className="col-opt">
-                    <span className="plan-tag">{c.plan}</span>
+                    <span className="sku-tags">
+                      <span className="plan-tag">{skus[0] || '—'}</span>
+                      {skus.length > 1 && (
+                        <span className="plan-tag sku-more" title={skus.join('、')}>
+                          +{skus.length - 1}
+                        </span>
+                      )}
+                    </span>
                   </td>
                   <td className="num strong">{formatMoney(c.contractAmount)}</td>
                   <td className="num">{formatDate(c.expiryDate)}</td>
