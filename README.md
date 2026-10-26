@@ -127,14 +127,3 @@ npm start       # 生产模式运行于端口 3001
     └── utils/               # 日期 / 金额 / SKU 多值工具（sku.js）
 ```
 
-## 远程仓库与 CI
-
-| 远端 | 地址 | 用途 |
-| --- | --- | --- |
-| `origin` | `https://github.com/dttssw/SMB-Sale.git` | 主仓库（GitHub），日常推送 |
-| `gitlab` | `http://172.16.43.132/root/smb-sale.git` | 内网自建 GitLab，跑构建 + 部署流水线 |
-
-- **不再推送到极狐 GitLab SaaS（jihulab.com）**：`jihulab` 远端与 SaaS 专用流水线文件 `.gitlab-ci.saas.yml` 均已删除；后续提交只推 `origin` / `gitlab`，任何时候都不要再推回极狐 SaaS。
-- 仓库只保留一份流水线配置 `.gitlab-ci.yml`，绑定内网自建实例上带 `smb-sale` tag 的 runner，负责 `build` + `deploy`（rsync 到 `/opt/smb-sale` 并重启 `systemctl`）。极狐 SaaS 共享 runner 没有该 tag、也访问不到内网路径，所以不需要第二份流水线。
-- 推送示例：`git push origin main && git push gitlab main`。
-
