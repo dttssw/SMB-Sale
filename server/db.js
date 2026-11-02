@@ -52,6 +52,8 @@ db.exec(`
     expiryDate     TEXT NOT NULL,
     note           TEXT DEFAULT '',
     skus           TEXT DEFAULT '[]',   -- SKU 列表（JSON 数组文本，plan 保留第一条作为主 SKU）
+    status         TEXT DEFAULT 'active', -- 'active' | 'lost'（lost = 已流失，归档到「Lost 客户」页）
+    lostAt         TEXT,                  -- 标记 lost 的日期（客户档案保持原样，只变状态位）
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -68,6 +70,8 @@ db.exec(`
     expiryDate     TEXT,                 -- renew 跟进对应的在约到期时间（冗余，便于展示）
     plan           TEXT DEFAULT '',      -- renew 跟进的 SKU（与在约记录同步，用于自动补建在约）
     skus           TEXT DEFAULT '[]',    -- SKU 列表（JSON 数组文本，plan 为第一条）
+    status         TEXT DEFAULT 'active',-- 'active' | 'lost'（lost = 已流失，归档到「Lost 客户」页）
+    lostAt         TEXT,                 -- 标记 lost 的日期（客户档案保持原样，只变状态位）
     note           TEXT DEFAULT '',
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -201,6 +205,15 @@ for (const table of ['contracts', 'prospects']) {
       db.prepare(`UPDATE ${table} SET skus = ? WHERE id = ?`).run(JSON.stringify([row.plan]), row.id);
     }
   }
+}
+
+// 迁移：流失标记 —— 在约 / 跟进角色增加 status（active | lost）与 lostAt（幂等）。
+// lost 只是一个状态位：客户主档、备注时间线与全部业务字段保持原样，
+// 客户只是从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（分 new-lost / renew-lost）。
+for (const table of ['contracts', 'prospects']) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes('status')) db.exec(`ALTER TABLE ${table} ADD COLUMN status TEXT DEFAULT 'active'`);
+  if (!cols.includes('lostAt')) db.exec(`ALTER TABLE ${table} ADD COLUMN lostAt TEXT`);
 }
 
 // 迁移：把「同日合并」的历史备注拆分成独立备注，让每条备注都能单独编辑 / 删除（与「今日工作记录」一致）。

@@ -230,6 +230,10 @@ button, input, select, textarea { font-family: inherit; }
 .follow-desc { font-size: var(--fs-xs); color: var(--fg-muted); }
 .follow-meta .stat-pills { margin: 0; }
 
+/* Lost 客户页：两块归档面板（New Lost / Renew Lost）用中性左侧竖条区分，
+   状态色只留给「已流失 N 家」胶囊，避免把归档误读成待处理告警 */
+.lost-panel { border-left: 3px solid var(--fg-dim); }
+
 /* ---------- 5. KPI（首页四列） ---------- */
 .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s4); }
 .kpi-card {
@@ -602,6 +606,15 @@ button, input, select, textarea { font-family: inherit; }
 .note-edit-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .customer-detail { display: flex; flex-direction: column; gap: var(--s5); }
 .detail-actions { display: flex; justify-content: flex-end; }
+/* 流失（lost）提示：说明档案与备注保持原样、可从「⋯ 更多」恢复 */
+.lost-hint {
+  display: flex; align-items: flex-start; gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--danger);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs); line-height: var(--lh-dense); color: var(--fg-muted);
+}
+.lost-hint svg { flex-shrink: 0; margin-top: 1px; color: var(--danger); }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s4); }
 .detail-item { display: flex; flex-direction: column; gap: var(--s1); }
 .detail-item.full { grid-column: 1 / -1; }

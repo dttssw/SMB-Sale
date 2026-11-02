@@ -70,4 +70,8 @@ export const api = {
   saveRenew: (data) => request('/renewals', { method: 'POST', body: JSON.stringify(data) }),
   // 跟进客户 → 转为在约：服务端在一个事务里完成「移出跟进 + 建立在约」，确保同一家客户不会同时出现在两个板块
   convertProspect: (id, data) => request(`/prospects/${id}/convert`, { method: 'POST', body: JSON.stringify(data) }),
+  // ---- 流失（lost）----
+  // 标记 / 恢复只是改角色行的状态位：客户主档、备注时间线与全部业务字段保持原样
+  markLost: (resource, id) => request(`/${resource}/${id}/lost`, { method: 'POST' }),
+  restoreLost: (resource, id) => request(`/${resource}/${id}/restore`, { method: 'POST' }),
 };

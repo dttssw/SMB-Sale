@@ -28,9 +28,11 @@ function DetailItem({ label, value, full }) {
   );
 }
 
-export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete, onNotesChanged }) {
+export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete, onMarkLost, onRestore, onNotesChanged }) {
   const isContract = customerType === 'contract';
   const isPartner = customerType === 'partner';
+  // 流失标记：lost 只是状态位，档案与备注保持原样，记录归档在「Lost 客户」页
+  const isLost = customer.status === 'lost';
   // 客户主档：跟进 / 在约 共用同一条备注时间线（customerType='customer'，以 customerId 为准）
   // 合作伙伴保持独立档案，备注仍按 partner + 自身 id
   const noteType = isPartner ? 'partner' : 'customer';
@@ -147,11 +149,14 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
 
   const items = [
     { label: '编辑', onClick: onEdit },
-    ...(isContract && onRenew ? [{ label: '续约', onClick: onRenew }] : []),
+    // 已流失（lost）记录只保留「恢复」，避免出现「已归档却还在续约 / 转在约」的中间态
+    ...(isContract && onRenew && !isLost ? [{ label: '续约', onClick: onRenew }] : []),
     // 只有跟进类 New 客户可以转为在约：续约跟进（renew）本身已关联在约合同，再转会生成第二条在约记录
-    ...(customerType === 'prospect' && customer.category === 'new' && onConvert
+    ...(customerType === 'prospect' && customer.category === 'new' && onConvert && !isLost
       ? [{ label: '转为在约', onClick: onConvert }]
       : []),
+    ...(isLost && onRestore ? [{ label: '恢复为进行中', onClick: onRestore }] : []),
+    ...(!isLost && !isPartner && onMarkLost ? [{ label: '标记为 Lost', onClick: onMarkLost }] : []),
     { label: '删除', danger: true, onClick: onDelete },
   ];
 
@@ -183,6 +188,16 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
         </div>
       </div>
 
+      {isLost && (
+        <div className="lost-hint">
+          <Icon name="alert" />
+          <span>
+            该客户已标记为 Lost（{customer.lostAt ? formatDate(customer.lostAt) : '时间未记录'}）：客户档案、SKU 与备注时间线保持原样，
+            归档在「Lost 客户」页；如需继续跟进，请在「⋯ 更多 → 恢复为进行中」。
+          </span>
+        </div>
+      )}
+
       <div className="detail-grid">
         {isContract ? (
           <>
@@ -212,6 +227,14 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
               <DetailItem label="续约到期时间" value={customer.expiryDate ? formatDate(customer.expiryDate) : '—'} full />
             )}
           </>
+        )}
+        {/* 流失状态：档案字段保持不变，只多一行状态说明（时间是标记 lost 的日期） */}
+        {isLost && (
+          <DetailItem
+            label="状态"
+            value={`Lost（已流失${customer.lostAt ? ` · ${formatDate(customer.lostAt)}` : ''}）`}
+            full
+          />
         )}
       </div>
 

@@ -12,6 +12,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
+import LostCustomers from './components/LostCustomers.jsx';
 import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
 import WorkJournal from './components/WorkJournal.jsx';
@@ -72,6 +73,7 @@ const SECTIONS = [
   { key: 'home', label: '总览', icon: 'home', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
   { key: 'journal', label: '今日工作', icon: 'journal', desc: '记下每天做了什么，按天归档、方便复盘' },
   { key: 'follow', label: '客户跟进', icon: 'target', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
+  { key: 'lost', label: 'Lost 客户', icon: 'alert', desc: '流失客户单独归档：New / Renew 分板块，客户档案与备注保持不变' },
   { key: 'contracts', label: '在约客户', icon: 'clipboard', desc: '在约订阅参考清单，临期客户优先处理' },
   { key: 'revenue', label: '成交金额', icon: 'coins', desc: '本月 / 累计成交回顾，心里有底' },
   { key: 'partners', label: '合作伙伴', icon: 'users', desc: '渠道商 / 代理商登记，可随时补备注' },
@@ -152,18 +154,30 @@ export default function App() {
   const materials = materialsDb.data;
   const worklogs = worklogsDb.data;
 
+  // ---- 流失（lost）分流 ----
+  // lost 只是角色行上的状态位：同一份客户主档 / 备注时间线不变，只是不进「在约 / 客户跟进 / 续约跟进」，
+  // 而是单独出现在左侧「Lost 客户」页：new-lost（跟进流失）与 renew-lost（在约 / 续约流失）。
+  const activeContracts = useMemo(() => contracts.filter((c) => c.status !== 'lost'), [contracts]);
+  const activeProspects = useMemo(() => prospects.filter((p) => p.status !== 'lost'), [prospects]);
+  const lostNewProspects = useMemo(
+    () => prospects.filter((p) => p.status === 'lost' && p.category !== 'renew'),
+    [prospects]
+  );
+  const lostContracts = useMemo(() => contracts.filter((c) => c.status === 'lost'), [contracts]);
+
   const stats = useMemo(() => {
     const today = todayStr();
-    const overdueFollow = prospects.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
-    const dueTodayFollow = prospects.filter((p) => p.nextFollowUp === today).length;
+    // 统计只算进行中的客户：已标记 lost 的记录已归档到「Lost 客户」页，不占用待办 / 临期角标
+    const overdueFollow = activeProspects.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
+    const dueTodayFollow = activeProspects.filter((p) => p.nextFollowUp === today).length;
     const followDue = overdueFollow + dueTodayFollow;
 
-    const overdueContracts = contracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
-    const expiring = contracts.filter((c) => {
+    const overdueContracts = activeContracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
+    const expiring = activeContracts.filter((c) => {
       const d = daysUntil(c.expiryDate);
       return d != null && d <= RENEW_WINDOW_DAYS;
     }).length;
-    const exp30 = contracts.filter((c) => {
+    const exp30 = activeContracts.filter((c) => {
       const d = daysUntil(c.expiryDate);
       return d != null && d >= 0 && d <= 30;
     }).length;
@@ -176,7 +190,7 @@ export default function App() {
     const monthNew = sumBy(newDeals.filter((d) => monthOf(d.date) === monthKey), 'amount');
     const newCount = newDeals.length;
     return { overdueFollow, dueTodayFollow, followDue, overdueContracts, expiring, exp30, todayWork, newTotal, monthNew, newCount };
-  }, [contracts, deals, prospects, worklogs]);
+  }, [activeContracts, activeProspects, deals, worklogs]);
 
   // 侧边导航角标（仅在有数量时显示）：只用于「需要处理」的板块——
   // 今日工作不挂角标，避免刚记一条就被标成待办而误读
@@ -335,6 +349,50 @@ export default function App() {
     }
   };
 
+  // ---- 标记 lost / 恢复 ----
+  // lost 只是角色行上的状态位：客户主档、备注时间线与全部业务字段保持原样，
+  // 记录归档到「Lost 客户」页（New Lost / Renew Lost），随时可以恢复。
+  const markLost = async (customerType, customer) => {
+    const resource = customerType === 'contract' ? 'contracts' : 'prospects';
+    const extra =
+      customerType === 'contract' ? '\n该客户对应的续约跟进会一起归档到「Renew Lost」，不会重复出现两条。' : '';
+    if (
+      !window.confirm(
+        `确认把「${customer.name}」标记为 Lost？\n客户档案、SKU 与备注保持原样，可在「Lost 客户」页查看并恢复。${extra}`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.markLost(resource, customer.id);
+      // 在约客户流失会连带归档续约跟进，两个板块都重新拉取
+      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
+      setActionError('');
+      setModal(null);
+      setActionNotice(`客户「${customer.name}」已归档到「Lost 客户」，档案与备注保持原样，可在详情里「恢复为进行中」`);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const restoreCustomer = async (customerType, customer) => {
+    const resource = customerType === 'contract' ? 'contracts' : 'prospects';
+    const backTo = customerType === 'contract' ? '在约客户' : '客户跟进';
+    if (!window.confirm(`确认把「${customer.name}」恢复为进行中？\n客户档案与备注原样保留，恢复后回到「${backTo}」板块。`)) {
+      return;
+    }
+    try {
+      await api.restoreLost(resource, customer.id);
+      // 恢复在约客户时服务端会重新收口续约跟进，一并刷新两个板块
+      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
+      setActionError('');
+      setModal(null);
+      setActionNotice(`客户「${customer.name}」已恢复为进行中，回到「${backTo}」板块`);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   const removePartner = async (id) => {
     if (!window.confirm('确认删除该合作伙伴？')) return;
     try {
@@ -366,8 +424,20 @@ export default function App() {
   };
 
   // 打开客户详情弹窗（点击客户名 / 详情按钮）
-  const openDetail = (customerType) => (customer) =>
+  // 续约跟进（renew）与在约客户是同一份档案：详情直接打开它关联的在约记录，
+  // 从而与「在约客户」页面点开的详情完全一致（同样的字段、同样的「续约」入口、同一份备注时间线）
+  const openDetail = (customerType) => (customer) => {
+    if (customerType === 'prospect' && customer.category === 'renew') {
+      const linked =
+        contracts.find((c) => c.id === customer.contractId) ||
+        contracts.find((c) => customer.customerId && c.customerId === customer.customerId);
+      if (linked) {
+        setModal({ kind: 'detail', customerType: 'contract', customer: linked });
+        return;
+      }
+    }
     setModal({ kind: 'detail', customerType, customer });
+  };
 
   // 打开编辑弹窗：备注已改为每条独立成行、在详情中逐条管理，这里直接打开编辑表单即可
   const openEditModal = (customerType, customer) => {
@@ -521,7 +591,7 @@ export default function App() {
       content = (
         <Home
           stats={stats}
-          contracts={contracts}
+          contracts={activeContracts}
           today={todayStr()}
           onView={openDetail('contract')}
           onRenew={renewContract}
@@ -563,14 +633,14 @@ export default function App() {
           </div>
           <div className={`workspace-grid${layoutMode === 'wide' ? ' grid-wide' : ''}`}>
             <ProspectList
-              prospects={prospects}
+              prospects={activeProspects}
               variant="new"
               wide={layoutMode === 'wide'}
               onAdd={() => setModal({ kind: 'prospect' })}
               onView={openDetail('prospect')}
             />
             <ProspectList
-              prospects={prospects}
+              prospects={activeProspects}
               variant="renew"
               wide={layoutMode === 'wide'}
               onAdd={() => setModal({ kind: 'renew' })}
@@ -580,8 +650,29 @@ export default function App() {
         </section>
       );
       break;
+    case 'lost':
+      content = (
+        <section className="workspace">
+          <div className="workspace-head">
+            <div>
+              <h2>Lost 客户</h2>
+              <p className="panel-desc">
+                不论 New 还是 Renew，标记为 lost 的客户都归档在这里，分「New 流失」与「续约流失」两块；
+                客户档案与备注时间线保持放入 lost 前的样子，随时可以恢复
+              </p>
+            </div>
+          </div>
+          <LostCustomers
+            newLost={lostNewProspects}
+            renewLost={lostContracts}
+            onViewNew={openDetail('prospect')}
+            onViewRenew={openDetail('contract')}
+          />
+        </section>
+      );
+      break;
     case 'contracts':
-      content = <ExpiringContracts contracts={contracts} onView={openDetail('contract')} />;
+      content = <ExpiringContracts contracts={activeContracts} onView={openDetail('contract')} />;
       break;
     case 'revenue':
       content = <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />;
@@ -661,6 +752,12 @@ export default function App() {
               onEdit={() => openEditModal(modal.customerType, detailCustomer)}
               onRenew={modal.customerType === 'contract' ? () => renewContract(detailCustomer) : undefined}
               onConvert={modal.customerType === 'prospect' ? () => convertProspect(detailCustomer) : undefined}
+              onMarkLost={
+                modal.customerType === 'partner' ? undefined : () => markLost(modal.customerType, detailCustomer)
+              }
+              onRestore={
+                modal.customerType === 'partner' ? undefined : () => restoreCustomer(modal.customerType, detailCustomer)
+              }
               onDelete={() => {
                 if (modal.customerType === 'contract') removeContract(detailCustomer.id);
                 else if (modal.customerType === 'prospect') removeProspect(detailCustomer.id);

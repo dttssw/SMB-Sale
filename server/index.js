@@ -54,8 +54,8 @@ app.use((req, res, next) => {
 const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
-  contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId'],
+  contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId', 'status', 'lostAt'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId', 'status', 'lostAt'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
   worklogs: ['id', 'content', 'date'],
@@ -79,6 +79,16 @@ const NUMBER_COLS = {
 
 const NOT_FOUND = (table) => TABLES.includes(table);
 
+// ---- 流失（lost）状态 ----
+// lost 只是角色行上的一个状态位：客户主档（customers）、备注时间线与全部业务字段保持原样，
+// 客户从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（分 new-lost / renew-lost）。
+const ACTIVE = 'active';
+const LOST = 'lost';
+const normalizeStatus = (value) => (value === LOST ? LOST : ACTIVE);
+const isLost = (row) => row?.status === LOST;
+// SQL 片段：只统计「进行中」的角色行（历史数据 status 为空按 active 处理）
+const NOT_LOST = `COALESCE(NULLIF(status, ''), 'active') != 'lost'`;
+
 function sanitize(table, body) {
   const allowed = COLUMNS[table];
   const row = {};
@@ -101,6 +111,11 @@ function sanitize(table, body) {
       err.status = 400;
       throw err;
     }
+  }
+  // 流失标记：status 只接受 active / lost（其余值一律按 active），lostAt 只在 lost 时保留
+  if (table === 'contracts' || table === 'prospects') {
+    if (row.status !== undefined) row.status = normalizeStatus(row.status);
+    if (row.status === ACTIVE) row.lostAt = null;
   }
   for (const key of NUMBER_COLS[table]) {
     row[key] = Number(row[key]);
@@ -370,7 +385,7 @@ function upsertRenewRole(contract, customerId, extra = {}) {
     .get(contract.id, customerId);
   if (existing) {
     db.prepare(
-      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, skus = @skus, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId WHERE id = @id`
+      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, skus = @skus, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId, status = 'active', lostAt = NULL WHERE id = @id`
     ).run({ ...data, contractId: contract.id, customerId, id: existing.id });
     return existing.id;
   }
@@ -431,8 +446,8 @@ function createContractFromRenew(renew) {
 function syncRenewals() {
   const summary = { createdContracts: 0, exitedRenew: 0 };
 
-  // A) 在约 → 续约跟进
-  for (const c of db.prepare(`SELECT * FROM contracts`).all()) {
+  // A) 在约 → 续约跟进（已标记 lost 的在约客户不再参与同步，留在「Lost 客户」页）
+  for (const c of db.prepare(`SELECT * FROM contracts WHERE ${NOT_LOST}`).all()) {
     if (!isWithinRenewWindow(c.expiryDate)) continue;
     // 复用在约客户的客户主档：续约跟进与在约客户共享同一份名称 / 联系人 / 备注
     let cid = c.customerId;
@@ -444,8 +459,8 @@ function syncRenewals() {
     upsertRenewRole(c, cid);
   }
 
-  // B) 续约跟进 → 在约判定 + 续约窗口收口
-  for (const r of db.prepare(`SELECT * FROM prospects WHERE category = 'renew'`).all()) {
+  // B) 续约跟进 → 在约判定 + 续约窗口收口（已标记 lost 的续约跟进同样不再参与同步）
+  for (const r of db.prepare(`SELECT * FROM prospects WHERE category = 'renew' AND ${NOT_LOST}`).all()) {
     const before = findContractFor(r);
     const contract = before || createContractFromRenew(r);
     if (!contract) {
@@ -466,10 +481,12 @@ function syncRenewals() {
     });
   }
 
-  // 同一家客户在续约跟进里最多一条（历史重复行的收口，保留最早的那条）
+  // 同一家客户在续约跟进里最多一条（历史重复行的收口，保留最早的那条；lost 行已归档，不参与）
   const seen = new Set();
   for (const row of db
-    .prepare(`SELECT id, contractId FROM prospects WHERE category = 'renew' AND contractId != '' ORDER BY createdAt ASC, id ASC`)
+    .prepare(
+      `SELECT id, contractId FROM prospects WHERE category = 'renew' AND contractId != '' AND ${NOT_LOST} ORDER BY createdAt ASC, id ASC`
+    )
     .all()) {
     if (!seen.has(row.contractId)) {
       seen.add(row.contractId);
@@ -694,6 +711,98 @@ app.post('/api/sync/renewals', (req, res, next) => {
   }
 });
 
+// ---- 标记 lost / 恢复（在约客户、客户跟进、续约跟进共用） ----
+// lost 只是角色行上的状态位：客户主档（customers）、备注时间线与全部业务字段保持原样，
+// 记录只是从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（new-lost / renew-lost）。
+function localToday() {
+  return dateKey(new Date());
+}
+
+function markRoleLost(table, id) {
+  const row = findRow(table, id);
+  if (!row) return null;
+  const stamp = localToday();
+  db.transaction(() => {
+    db.prepare(`UPDATE ${table} SET status = ?, lostAt = ? WHERE id = ?`).run(LOST, stamp, id);
+    // 在约客户流失 → 它的续约跟进一并归档：Renew Lost 统一按在约记录列出，同一客户不会出现两次
+    if (table === 'contracts') {
+      db.prepare(
+        `UPDATE prospects SET status = ?, lostAt = ? WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
+      ).run(LOST, stamp, id, row.customerId || '');
+    }
+    // 反向兜底：续约跟进本身流失时，把关联的在约记录一起归档，避免「归档了却在 Lost 页看不到」
+    if (table === 'prospects' && row.category === 'renew') {
+      const contract =
+        (row.contractId && findRow('contracts', row.contractId)) ||
+        (row.customerId &&
+          db.prepare(`SELECT * FROM contracts WHERE customerId = ? ORDER BY expiryDate DESC LIMIT 1`).get(row.customerId));
+      if (contract) {
+        db.prepare(`UPDATE contracts SET status = ?, lostAt = ? WHERE id = ?`).run(LOST, stamp, contract.id);
+      }
+    }
+  })();
+  return findRow(table, id);
+}
+
+function restoreRole(table, id) {
+  const row = findRow(table, id);
+  if (!row) return null;
+  const cid = row.customerId || '';
+  // 恢复前确认同一客户在本板块没有另一条进行中的记录，避免同一板块出现两次
+  if (cid) {
+    const other =
+      table === 'contracts'
+        ? db.prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND id != ? AND ${NOT_LOST}`).get(cid, id)
+        : db
+            .prepare(
+              `SELECT id, name FROM prospects WHERE customerId = ? AND id != ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}`
+            )
+            .get(cid, id, row.category === 'renew' ? 'renew' : 'new');
+    if (other) {
+      throw conflict(`客户「${other.name}」已有一条进行中的记录，请先处理该条再恢复这条 lost 记录`);
+    }
+  }
+  db.transaction(() => {
+    db.prepare(`UPDATE ${table} SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, id);
+    if (table === 'contracts') {
+      db.prepare(
+        `UPDATE prospects SET status = ?, lostAt = NULL WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
+      ).run(ACTIVE, id, cid);
+    }
+  })();
+  // 恢复在约客户后重新收口续约跟进：临期的重新带出，窗口外的自动退出（与原规则一致）
+  if (table === 'contracts') syncRenewals();
+  return findRow(table, id);
+}
+
+const LOST_TABLES = ['contracts', 'prospects'];
+
+// 标记：POST /api/contracts/:id/lost、POST /api/prospects/:id/lost
+app.post('/api/:table/:id/lost', (req, res, next) => {
+  const table = req.params.table;
+  if (!LOST_TABLES.includes(table)) return res.status(404).json({ error: '未知资源' });
+  try {
+    const row = markRoleLost(table, req.params.id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    res.json(withRoleSkus(table, row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 恢复：POST /api/contracts/:id/restore、POST /api/prospects/:id/restore
+app.post('/api/:table/:id/restore', (req, res, next) => {
+  const table = req.params.table;
+  if (!LOST_TABLES.includes(table)) return res.status(404).json({ error: '未知资源' });
+  try {
+    const row = restoreRole(table, req.params.id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    res.json(withRoleSkus(table, row));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---- 新建 / 编辑续约客户：服务端统一执行「在约判定」（须注册在泛型 POST /api/:table 之前） ----
 // 1) 判定该客户是否在约（contractId → customerId → 客户名）：
 //    在约 → 表单里的 SKU / 金额 / 到期时间同步回在约记录（名称、联系人以客户主档为准）
@@ -740,6 +849,11 @@ app.post('/api/renewals', (req, res, next) => {
     });
     let createdContract = false;
     const expiryDate = String(body.expiryDate);
+    // 保存续约 = 客户重新在约：此前标记 lost 的在约记录随之恢复（客户档案与备注原样保留）
+    if (contract && isLost(contract)) {
+      db.prepare(`UPDATE contracts SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, contract.id);
+      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
+    }
     if (contract) {
       // 已是在约客户：把表单里的订阅信息（含 SKU 列表）同步回在约记录，两个板块保持一致
       const currentSkus = skuListOf(contract);
@@ -854,13 +968,19 @@ function assertCustomerRoleFree(table, row, excludeId) {
   if (!cid) return;
   const skip = excludeId ? ` AND id != ?` : ``;
   const skipArgs = excludeId ? [excludeId] : [];
+  // 只跟「进行中」的角色行比唯一性：已标记 lost 的记录已归档到「Lost 客户」页，
+  // 不挡客户重新进入跟进 / 在约流程（客户主档仍然只有一条，档案与备注继续复用）
   if (table === 'contracts') {
-    const dup = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?${skip}`).get(cid, ...skipArgs);
+    const dup = db
+      .prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND ${NOT_LOST}${skip}`)
+      .get(cid, ...skipArgs);
     if (dup) {
       throw conflict(`该客户已有在约记录（${dup.name}），如需延长期限请在详情里使用「续约」`);
     }
     const following = db
-      .prepare(`SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new'${skip}`)
+      .prepare(
+        `SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new' AND ${NOT_LOST}${skip}`
+      )
       .get(cid, ...skipArgs);
     if (following) {
       throw conflict(`客户「${following.name}」仍在客户跟进列表中，请在其详情里使用「转为在约」`);
@@ -869,7 +989,9 @@ function assertCustomerRoleFree(table, row, excludeId) {
   if (table === 'prospects') {
     const category = row.category === 'renew' ? 'renew' : 'new';
     const dup = db
-      .prepare(`SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ?${skip}`)
+      .prepare(
+        `SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}${skip}`
+      )
       .get(cid, category, ...skipArgs);
     if (dup) {
       throw conflict(
@@ -878,7 +1000,9 @@ function assertCustomerRoleFree(table, row, excludeId) {
     }
     // 新签跟进不能挂在已是在约客户的公司上（续约由系统按到期时间自动带出 Renew）
     if (category === 'new') {
-      const active = db.prepare(`SELECT id, name FROM contracts WHERE customerId = ?${skip}`).get(cid, ...skipArgs);
+      const active = db
+        .prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND ${NOT_LOST}${skip}`)
+        .get(cid, ...skipArgs);
       if (active) {
         throw conflict(
           `客户「${active.name}」已是在约客户，系统已把它归入「在约客户」板块；距到期 ≤ ${RENEW_WINDOW_DAYS} 天时会自动带出续约跟进，无需重复新增跟进`
@@ -896,7 +1020,8 @@ function prepareCustomerRole(table, body, excludeId) {
     row.customerId = identity.customerId;
     row.name = identity.name;
     row.contact = identity.contact;
-    assertCustomerRoleFree(table, row, excludeId);
+    // 已标记 lost 的记录已归档到「Lost 客户」页，不参与板块唯一性校验
+    if (!isLost(row)) assertCustomerRoleFree(table, row, excludeId);
   }
   return row;
 }
