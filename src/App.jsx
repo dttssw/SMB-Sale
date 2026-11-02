@@ -73,9 +73,9 @@ const SECTIONS = [
   { key: 'home', label: '总览', icon: 'home', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
   { key: 'journal', label: '今日工作', icon: 'journal', desc: '记下每天做了什么，按天归档、方便复盘' },
   { key: 'follow', label: '客户跟进', icon: 'target', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
-  { key: 'lost', label: 'Lost 客户', icon: 'alert', desc: '流失客户单独归档：New / Renew 分板块，客户档案与备注保持不变' },
   { key: 'contracts', label: '在约客户', icon: 'clipboard', desc: '在约订阅参考清单，临期客户优先处理' },
   { key: 'revenue', label: '成交金额', icon: 'coins', desc: '本月 / 累计成交回顾，心里有底' },
+  { key: 'lost', label: 'Lost 客户', icon: 'alert', desc: '流失客户单独归档：New / Renew 分板块，客户档案与备注保持不变' },
   { key: 'partners', label: '合作伙伴', icon: 'users', desc: '渠道商 / 代理商登记，可随时补备注' },
   { key: 'materials', label: '材料库', icon: 'folder', desc: '方案 / 报价 / 合同模板等资料集中管理' },
 ];
@@ -156,7 +156,7 @@ export default function App() {
 
   // ---- 流失（lost）分流 ----
   // lost 只是角色行上的状态位：同一份客户主档 / 备注时间线不变，只是不进「在约 / 客户跟进 / 续约跟进」，
-  // 而是单独出现在左侧「Lost 客户」页：new-lost（跟进流失）与 renew-lost（在约 / 续约流失）。
+  // 而是单独出现在左侧「Lost 客户」页：new-lost（跟进流失）与 renew-lost（在约 / Renew 流失）。
   const activeContracts = useMemo(() => contracts.filter((c) => c.status !== 'lost'), [contracts]);
   const activeProspects = useMemo(() => prospects.filter((p) => p.status !== 'lost'), [prospects]);
   const lostNewProspects = useMemo(
@@ -657,7 +657,7 @@ export default function App() {
             <div>
               <h2>Lost 客户</h2>
               <p className="panel-desc">
-                不论 New 还是 Renew，标记为 lost 的客户都归档在这里，分「New 流失」与「续约流失」两块；
+                不论 New 还是 Renew，标记为 lost 的客户都归档在这里，分「New 流失」与「Renew 流失」两块；
                 客户档案与备注时间线保持放入 lost 前的样子，随时可以恢复
               </p>
             </div>

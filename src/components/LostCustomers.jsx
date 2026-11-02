@@ -20,7 +20,7 @@ const VARIANTS = {
   },
   renew: {
     variant: 'renew',
-    title: '续约流失客户',
+    title: 'Renew 流失客户',
     tag: 'RENEW LOST',
     desc: '标记为 lost 的在约 / 续约客户归档在这里；订阅信息与备注时间线保持原样，可随时恢复',
     empty: '暂无流失的续约客户：在客户详情里「⋯ 更多 → 标记为 Lost」即可归档',
