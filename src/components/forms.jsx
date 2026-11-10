@@ -211,7 +211,15 @@ export function ProspectForm({ initial, onSave, onCancel }) {
       <Field label="上次跟进日期">
         <DatePicker value={form.lastFollowUp} onChange={(v) => setForm((f) => ({ ...f, lastFollowUp: v }))} />
       </Field>
-      <Field label="下次跟进日期" full>
+      <Field
+        label="下次跟进日期"
+        full
+        hint={
+          initial?.status === 'watching'
+            ? '长期观察客户不需要定时跟进，此处留空即可；要恢复定时跟进请在「长期观察」页点「恢复跟进」'
+            : undefined
+        }
+      >
         <DatePicker value={form.nextFollowUp} onChange={(v) => setForm((f) => ({ ...f, nextFollowUp: v }))} />
       </Field>
       {error && <div className="form-error">{error}</div>}

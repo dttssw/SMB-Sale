@@ -11,7 +11,7 @@ import { formatMoney } from '../utils/format.js';
 const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
 // 表格只渲染「当前页」的数据：密度、每页条数、高度自适应由 useFitPaging + ListTools 统一处理
-function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeight }) {
+function ProspectTable({ items, isRenew, wide, onView, onAdd, onWatch, scrollRef, maxHeight }) {
   // 双栏（窄）时省略「上次跟进」，把宽度留给客户与关键日期；单栏全宽时字段更全
   // New：客户 / 阶段 / 预估金额 / [上次跟进] / 下次跟进 / 操作；Renew：客户 / 预估金额 / [上次跟进] / 下次跟进 / 续约到期 / 操作
   const colCount = wide ? 6 : 5;
@@ -79,6 +79,18 @@ function ProspectTable({ items, isRenew, wide, onView, onAdd, scrollRef, maxHeig
                   </td>
                 )}
                 <td className="ops">
+                  {/* 长期观察：只改这条跟进记录的状态位，不新建客户、不拆备注时间线 */}
+                  {!isRenew && onWatch && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={() => onWatch(p)}
+                      title="转为长期观察：不再安排定时跟进，客户移到「长期观察」页"
+                    >
+                      <Icon name="eye" />
+                      长期观察
+                    </button>
+                  )}
                   <span className="row-chevron">
                     <Icon name="chevronRight" />
                   </span>
@@ -114,7 +126,7 @@ const VARIANTS = {
     title: '正在跟进的新客户',
     tag: 'NEW',
     isRenew: false,
-    desc: '按下一次跟进时间排序，逾期未跟进的客户优先处理',
+    desc: '按下一次跟进时间排序，逾期未跟进的客户优先处理；只需要长期留意、暂时不用定时跟进的客户，点行内「长期观察」即可转入',
     addLabel: '新增跟进',
   },
   renew: {
@@ -127,7 +139,7 @@ const VARIANTS = {
   },
 };
 
-export default function ProspectList({ prospects, variant, onAdd, onView, wide = false }) {
+export default function ProspectList({ prospects, variant, onAdd, onView, onWatch, wide = false }) {
   const viewport = useViewport();
   const today = todayStr();
   const v = VARIANTS[variant] || VARIANTS.new;
@@ -200,6 +212,7 @@ export default function ProspectList({ prospects, variant, onAdd, onView, wide =
         wide={wide}
         onView={onView}
         onAdd={onAdd}
+        onWatch={onWatch}
         scrollRef={scrollRef}
         maxHeight={maxHeight}
       />

@@ -55,7 +55,7 @@ const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
 
 const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId', 'status', 'lostAt'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId', 'status', 'lostAt'],
+  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId', 'status', 'lostAt', 'watchedAt'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
   partners: ['id', 'name', 'contact', 'note'],
   worklogs: ['id', 'content', 'date'],
@@ -84,8 +84,15 @@ const NOT_FOUND = (table) => TABLES.includes(table);
 // 客户从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（分 new-lost / renew-lost）。
 const ACTIVE = 'active';
 const LOST = 'lost';
-const normalizeStatus = (value) => (value === LOST ? LOST : ACTIVE);
+// ---- 长期观察（watching）状态 ----
+// 同样是 prospects 行上的状态位：客户主档、SKU、金额与备注时间线原样保留，
+// 同一客户始终只有一条跟进记录；客户从「客户跟进」移到左侧「长期观察」页，
+// 且不再安排定时跟进（nextFollowUp 置空，备注重算时也不会再写回）。
+const WATCHING = 'watching';
+const STATUSES = [ACTIVE, LOST, WATCHING];
+const normalizeStatus = (value) => (STATUSES.includes(value) ? value : ACTIVE);
 const isLost = (row) => row?.status === LOST;
+const isWatching = (row) => row?.status === WATCHING;
 // SQL 片段：只统计「进行中」的角色行（历史数据 status 为空按 active 处理）
 const NOT_LOST = `COALESCE(NULLIF(status, ''), 'active') != 'lost'`;
 
@@ -112,10 +119,25 @@ function sanitize(table, body) {
       throw err;
     }
   }
-  // 流失标记：status 只接受 active / lost（其余值一律按 active），lostAt 只在 lost 时保留
+  // 流失 / 长期观察标记：status 只接受 active / lost / watching（其余值一律按 active）；
+  // lostAt 只在 lost 时保留，watchedAt 只在 watching 时保留（两个状态互斥）
   if (table === 'contracts' || table === 'prospects') {
     if (row.status !== undefined) row.status = normalizeStatus(row.status);
-    if (row.status === ACTIVE) row.lostAt = null;
+    if (row.status === ACTIVE) {
+      row.lostAt = null;
+      if (table === 'prospects') row.watchedAt = null;
+    }
+    if (row.status === LOST && table === 'prospects') row.watchedAt = null;
+    if (row.status === WATCHING) {
+      // 长期观察只适用于跟进角色（在约客户没有这个状态）
+      if (table === 'contracts') {
+        row.status = ACTIVE;
+      } else {
+        // 长期观察客户不需要定时跟进：即使表单里带了日期也不落库
+        row.lostAt = null;
+        row.nextFollowUp = null;
+      }
+    }
   }
   for (const key of NUMBER_COLS[table]) {
     row[key] = Number(row[key]);
@@ -254,29 +276,27 @@ function lastFollowUpDates(customerId) {
   const lf = dateKey(d);
   return { lastFollowUp: lf, nextFollowUp: addDays(lf, 3) };
 }
-// 重算某客户主档下所有跟进角色的上次/下次跟进日期
+// 重算某客户主档下所有跟进角色的上次/下次跟进日期。
+// 长期观察（status='watching'）的客户不需要定时跟进：只更新上次跟进，下次跟进保持为空，
+// 因此加备注也不会把它重新变成「逾期未跟进」。
 function updateFollowUpsForCustomer(customerId) {
   const dates = lastFollowUpDates(customerId);
   if (dates) {
-    db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE customerId = ?`).run(
-      dates.lastFollowUp,
-      dates.nextFollowUp,
-      customerId
-    );
+    db.prepare(
+      `UPDATE prospects SET lastFollowUp = ?, nextFollowUp = CASE WHEN COALESCE(NULLIF(status, ''), 'active') = ? THEN NULL ELSE ? END WHERE customerId = ?`
+    ).run(dates.lastFollowUp, WATCHING, dates.nextFollowUp, customerId);
   }
 }
-// 更新所有跟进客户的上次/下次跟进日期（以客户主档备注时间线为准）
+// 更新所有跟进客户的上次/下次跟进日期（以客户主档备注时间线为准；长期观察客户不写下次跟进）
 function reindexProspectFollowUps() {
   const pros = db.prepare(`SELECT id, customerId FROM prospects`).all();
   for (const p of pros) {
     if (!p.customerId) continue;
     const dates = lastFollowUpDates(p.customerId);
     if (dates) {
-      db.prepare(`UPDATE prospects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
-        dates.lastFollowUp,
-        dates.nextFollowUp,
-        p.id
-      );
+      db.prepare(
+        `UPDATE prospects SET lastFollowUp = ?, nextFollowUp = CASE WHEN COALESCE(NULLIF(status, ''), 'active') = ? THEN NULL ELSE ? END WHERE id = ?`
+      ).run(dates.lastFollowUp, WATCHING, dates.nextFollowUp, p.id);
     }
   }
 }
@@ -722,12 +742,14 @@ function markRoleLost(table, id) {
   const row = findRow(table, id);
   if (!row) return null;
   const stamp = localToday();
+  // 长期观察与流失互斥：标记 lost 时清掉 watchedAt（contracts 没有这个字段）
+  const clearWatch = table === 'prospects' ? `, watchedAt = NULL` : '';
   db.transaction(() => {
-    db.prepare(`UPDATE ${table} SET status = ?, lostAt = ? WHERE id = ?`).run(LOST, stamp, id);
+    db.prepare(`UPDATE ${table} SET status = ?, lostAt = ?${clearWatch} WHERE id = ?`).run(LOST, stamp, id);
     // 在约客户流失 → 它的续约跟进一并归档：Renew Lost 统一按在约记录列出，同一客户不会出现两次
     if (table === 'contracts') {
       db.prepare(
-        `UPDATE prospects SET status = ?, lostAt = ? WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
+        `UPDATE prospects SET status = ?, lostAt = ?, watchedAt = NULL WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
       ).run(LOST, stamp, id, row.customerId || '');
     }
     // 反向兜底：续约跟进本身流失时，把关联的在约记录一起归档，避免「归档了却在 Lost 页看不到」
@@ -744,10 +766,33 @@ function markRoleLost(table, id) {
   return findRow(table, id);
 }
 
+// 转为长期观察（仅跟进类 New 客户）：
+// 不新建任何记录 —— 只是把这条跟进记录的状态位置为 watching 并记下 watchedAt，
+// 客户主档（customers）、SKU、金额与备注时间线保持原样，因此「一个客户只有一张表」的原则不变。
+// 同时清空 nextFollowUp：长期观察客户不需要定时跟进，也不会进入「今日需跟进 / 逾期」统计。
+function markRoleWatching(id) {
+  const row = findRow('prospects', id);
+  if (!row) return null;
+  if (row.category === 'renew') {
+    throw conflict('续约跟进客户关联着在约合同，不能转为长期观察');
+  }
+  if (isLost(row)) {
+    throw conflict('该客户已标记为 Lost，请先在「Lost 客户」页恢复后再转为长期观察');
+  }
+  db.prepare(`UPDATE prospects SET status = ?, watchedAt = ?, nextFollowUp = NULL WHERE id = ?`).run(
+    WATCHING,
+    localToday(),
+    id
+  );
+  return findRow('prospects', id);
+}
+
 function restoreRole(table, id) {
   const row = findRow(table, id);
   if (!row) return null;
   const cid = row.customerId || '';
+  // 从长期观察恢复：恢复后重新按备注时间线安排下次跟进
+  const wasWatching = table === 'prospects' && isWatching(row);
   // 恢复前确认同一客户在本板块没有另一条进行中的记录，避免同一板块出现两次
   if (cid) {
     const other =
@@ -759,17 +804,24 @@ function restoreRole(table, id) {
             )
             .get(cid, id, row.category === 'renew' ? 'renew' : 'new');
     if (other) {
-      throw conflict(`客户「${other.name}」已有一条进行中的记录，请先处理该条再恢复这条 lost 记录`);
+      throw conflict(`客户「${other.name}」已有一条进行中的记录，请先处理该条再恢复这条归档记录`);
     }
   }
   db.transaction(() => {
-    db.prepare(`UPDATE ${table} SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, id);
+    // watching 与 lost 互斥：恢复时两个时间戳都清空（contracts 没有 watchedAt）
+    if (table === 'prospects') {
+      db.prepare(`UPDATE prospects SET status = ?, lostAt = NULL, watchedAt = NULL WHERE id = ?`).run(ACTIVE, id);
+    } else {
+      db.prepare(`UPDATE ${table} SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, id);
+    }
     if (table === 'contracts') {
       db.prepare(
         `UPDATE prospects SET status = ?, lostAt = NULL WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
       ).run(ACTIVE, id, cid);
     }
   })();
+  // 从长期观察恢复：重新按备注时间线安排下次跟进（备注挂在共享客户主档上，不会丢）
+  if (wasWatching && cid) updateFollowUpsForCustomer(cid);
   // 恢复在约客户后重新收口续约跟进：临期的重新带出，窗口外的自动退出（与原规则一致）
   if (table === 'contracts') syncRenewals();
   return findRow(table, id);
@@ -798,6 +850,19 @@ app.post('/api/:table/:id/restore', (req, res, next) => {
     const row = restoreRole(table, req.params.id);
     if (!row) return res.status(404).json({ error: '记录不存在' });
     res.json(withRoleSkus(table, row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 转为长期观察：POST /api/prospects/:id/watch
+// 与 lost 一样只是状态位（status='watching' + watchedAt），不复制客户主档、不新建记录；
+// 仅适用于跟进类 New 客户（续约跟进关联着在约合同，不能转长期观察）。
+app.post('/api/prospects/:id/watch', (req, res, next) => {
+  try {
+    const row = markRoleWatching(req.params.id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    res.json(withSkus(row));
   } catch (err) {
     next(err);
   }
@@ -962,6 +1027,8 @@ app.get('/api/:table', (req, res, next) => {
 
 // 客户名唯一 → 一家客户在「在约 / 客户跟进 / 续约跟进」里各最多出现一次。
 // 同一客户跨板块重复（例如既在客户跟进又在约）会让同一家公司出现两条记录、备注时间线被拆开，因此写入前统一校验。
+// 长期观察（watching）的记录仍占用「客户跟进」这一个位置：需要继续跟进时请在长期观察页「恢复跟进」，
+// 而不是再新增一条记录（保证一个客户始终只有一张表）。
 // excludeId：更新角色行时排除自身。
 function assertCustomerRoleFree(table, row, excludeId) {
   const cid = String(row.customerId || '');
@@ -979,23 +1046,29 @@ function assertCustomerRoleFree(table, row, excludeId) {
     }
     const following = db
       .prepare(
-        `SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new' AND ${NOT_LOST}${skip}`
+        `SELECT id, name, status FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new' AND ${NOT_LOST}${skip}`
       )
       .get(cid, ...skipArgs);
     if (following) {
-      throw conflict(`客户「${following.name}」仍在客户跟进列表中，请在其详情里使用「转为在约」`);
+      throw conflict(
+        isWatching(following)
+          ? `客户「${following.name}」正在「长期观察」中，如需继续跟进请先在长期观察页「恢复跟进」`
+          : `客户「${following.name}」仍在客户跟进列表中，请在其详情里使用「转为在约」`
+      );
     }
   }
   if (table === 'prospects') {
     const category = row.category === 'renew' ? 'renew' : 'new';
     const dup = db
       .prepare(
-        `SELECT id, name FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}${skip}`
+        `SELECT id, name, status FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}${skip}`
       )
       .get(cid, category, ...skipArgs);
     if (dup) {
       throw conflict(
-        `客户「${dup.name}」已在「${category === 'renew' ? '续约跟进' : '客户跟进'}」列表中，请直接查看 / 编辑该条记录`
+        isWatching(dup)
+          ? `客户「${dup.name}」正在「长期观察」中，如需继续跟进请先在长期观察页「恢复跟进」`
+          : `客户「${dup.name}」已在「${category === 'renew' ? '续约跟进' : '客户跟进'}」列表中，请直接查看 / 编辑该条记录`
       );
     }
     // 新签跟进不能挂在已是在约客户的公司上（续约由系统按到期时间自动带出 Renew）

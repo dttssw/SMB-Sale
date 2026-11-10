@@ -74,4 +74,8 @@ export const api = {
   // 标记 / 恢复只是改角色行的状态位：客户主档、备注时间线与全部业务字段保持原样
   markLost: (resource, id) => request(`/${resource}/${id}/lost`, { method: 'POST' }),
   restoreLost: (resource, id) => request(`/${resource}/${id}/restore`, { method: 'POST' }),
+  // ---- 长期观察（watching）----
+  // 转为长期观察同样只是状态位：不复制客户、不新建记录，客户档案与备注时间线原样保留，
+  // 只是不再安排定时跟进（nextFollowUp 清空），并从「客户跟进」移到「长期观察」页
+  markWatching: (id) => request(`/prospects/${id}/watch`, { method: 'POST' }),
 };

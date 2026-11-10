@@ -12,6 +12,7 @@ import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
 import ExpiringContracts from './components/ExpiringContracts.jsx';
 import ProspectList from './components/ProspectList.jsx';
+import WatchList from './components/WatchList.jsx';
 import LostCustomers from './components/LostCustomers.jsx';
 import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
@@ -73,6 +74,7 @@ const SECTIONS = [
   { key: 'home', label: '总览', icon: 'home', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
   { key: 'journal', label: '今日工作', icon: 'journal', desc: '记下每天做了什么，按天归档、方便复盘' },
   { key: 'follow', label: '客户跟进', icon: 'target', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
+  { key: 'watch', label: '长期观察', icon: 'eye', desc: '不需要定时跟进、但需要长期留意的客户，可随时恢复跟进' },
   { key: 'contracts', label: '在约客户', icon: 'clipboard', desc: '在约订阅参考清单，临期客户优先处理' },
   { key: 'revenue', label: '成交金额', icon: 'coins', desc: '本月 / 累计成交回顾，心里有底' },
   { key: 'lost', label: 'Lost 客户', icon: 'alert', desc: '流失客户单独归档：New / Renew 分板块，客户档案与备注保持不变' },
@@ -154,11 +156,19 @@ export default function App() {
   const materials = materialsDb.data;
   const worklogs = worklogsDb.data;
 
-  // ---- 流失（lost）分流 ----
-  // lost 只是角色行上的状态位：同一份客户主档 / 备注时间线不变，只是不进「在约 / 客户跟进 / 续约跟进」，
-  // 而是单独出现在左侧「Lost 客户」页：new-lost（跟进流失）与 renew-lost（在约 / Renew 流失）。
+  // ---- 流失（lost）/ 长期观察（watching）分流 ----
+  // 两者都只是角色行上的状态位：同一份客户主档 / 备注时间线不变，只是不进「在约 / 客户跟进 / 续约跟进」，
+  // 而是单独出现在左侧「Lost 客户」页（new-lost / renew-lost）与「长期观察」页。
   const activeContracts = useMemo(() => contracts.filter((c) => c.status !== 'lost'), [contracts]);
-  const activeProspects = useMemo(() => prospects.filter((p) => p.status !== 'lost'), [prospects]);
+  const activeProspects = useMemo(
+    () => prospects.filter((p) => p.status !== 'lost' && p.status !== 'watching'),
+    [prospects]
+  );
+  // 长期观察：只收跟进类 New 客户（续约跟进关联在约合同，不参与长期观察）
+  const watchProspects = useMemo(
+    () => prospects.filter((p) => p.status === 'watching' && p.category !== 'renew'),
+    [prospects]
+  );
   const lostNewProspects = useMemo(
     () => prospects.filter((p) => p.status === 'lost' && p.category !== 'renew'),
     [prospects]
@@ -375,10 +385,40 @@ export default function App() {
     }
   };
 
+  // 转为长期观察：只是这条跟进记录的状态位（status='watching' + watchedAt），
+  // 不新建客户、不拆备注时间线；转入后不再安排定时跟进（nextFollowUp 清空），
+  // 客户从「客户跟进」移到「长期观察」页，随时可以「恢复跟进」。
+  const markWatching = async (prospect) => {
+    if (prospect.category === 'renew') {
+      setActionError('续约跟进客户关联着在约合同，不能转为长期观察');
+      return;
+    }
+    if (
+      !window.confirm(
+        `确认把「${prospect.name}」转为长期观察？\n转为长期观察后不再安排定时跟进，客户会移到「长期观察」页；客户档案、SKU 与备注保持原样，随时可恢复跟进。`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.markWatching(prospect.id);
+      await prospectsDb.reload();
+      setActionError('');
+      setModal(null);
+      setActionNotice(`客户「${prospect.name}」已转入「长期观察」，不再安排定时跟进；需要时可随时恢复跟进`);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
   const restoreCustomer = async (customerType, customer) => {
     const resource = customerType === 'contract' ? 'contracts' : 'prospects';
+    const watching = customer.status === 'watching';
     const backTo = customerType === 'contract' ? '在约客户' : '客户跟进';
-    if (!window.confirm(`确认把「${customer.name}」恢复为进行中？\n客户档案与备注原样保留，恢复后回到「${backTo}」板块。`)) {
+    const hint = watching
+      ? `确认把「${customer.name}」恢复跟进？\n客户档案、SKU 与备注原样保留，恢复后回到「${backTo}」，重新按下一次跟进时间安排。`
+      : `确认把「${customer.name}」恢复为进行中？\n客户档案与备注原样保留，恢复后回到「${backTo}」板块。`;
+    if (!window.confirm(hint)) {
       return;
     }
     try {
@@ -387,7 +427,11 @@ export default function App() {
       await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
       setActionError('');
       setModal(null);
-      setActionNotice(`客户「${customer.name}」已恢复为进行中，回到「${backTo}」板块`);
+      setActionNotice(
+        watching
+          ? `客户「${customer.name}」已恢复跟进，重新回到「${backTo}」板块`
+          : `客户「${customer.name}」已恢复为进行中，回到「${backTo}」板块`
+      );
     } catch (err) {
       setActionError(err.message);
     }
@@ -638,6 +682,7 @@ export default function App() {
               wide={layoutMode === 'wide'}
               onAdd={() => setModal({ kind: 'prospect' })}
               onView={openDetail('prospect')}
+              onWatch={markWatching}
             />
             <ProspectList
               prospects={activeProspects}
@@ -646,6 +691,24 @@ export default function App() {
               onAdd={() => setModal({ kind: 'renew' })}
               onView={openDetail('prospect')}
             />
+          </div>
+        </section>
+      );
+      break;
+    case 'watch':
+      content = (
+        <section className="workspace">
+          <div className="workspace-head">
+            <div>
+              <h2>长期观察</h2>
+              <p className="panel-desc">
+                不需要设定时跟进、但需要长期留意的客户收在这里；转入不新建客户、不复制档案，
+                客户档案、SKU 与备注时间线保持原样，需要时随时「恢复跟进」
+              </p>
+            </div>
+          </div>
+          <div className="workspace-grid grid-wide">
+            <WatchList prospects={watchProspects} onView={openDetail('prospect')} onRestore={(p) => restoreCustomer('prospect', p)} />
           </div>
         </section>
       );
@@ -752,6 +815,9 @@ export default function App() {
               onEdit={() => openEditModal(modal.customerType, detailCustomer)}
               onRenew={modal.customerType === 'contract' ? () => renewContract(detailCustomer) : undefined}
               onConvert={modal.customerType === 'prospect' ? () => convertProspect(detailCustomer) : undefined}
+              onWatch={
+                modal.customerType === 'prospect' ? () => markWatching(detailCustomer) : undefined
+              }
               onMarkLost={
                 modal.customerType === 'partner' ? undefined : () => markLost(modal.customerType, detailCustomer)
               }

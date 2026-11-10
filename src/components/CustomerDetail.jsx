@@ -28,11 +28,13 @@ function DetailItem({ label, value, full }) {
   );
 }
 
-export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onDelete, onMarkLost, onRestore, onNotesChanged }) {
+export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onWatch, onDelete, onMarkLost, onRestore, onNotesChanged }) {
   const isContract = customerType === 'contract';
   const isPartner = customerType === 'partner';
   // 流失标记：lost 只是状态位，档案与备注保持原样，记录归档在「Lost 客户」页
   const isLost = customer.status === 'lost';
+  // 长期观察：同样是状态位（status='watching'），客户不再安排定时跟进，归档在「长期观察」页
+  const isWatching = customer.status === 'watching';
   // 客户主档：跟进 / 在约 共用同一条备注时间线（customerType='customer'，以 customerId 为准）
   // 合作伙伴保持独立档案，备注仍按 partner + 自身 id
   const noteType = isPartner ? 'partner' : 'customer';
@@ -149,14 +151,20 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
 
   const items = [
     { label: '编辑', onClick: onEdit },
-    // 已流失（lost）记录只保留「恢复」，避免出现「已归档却还在续约 / 转在约」的中间态
+    // 已流失（lost）/ 长期观察记录只保留「恢复」，避免出现「已归档却还在续约 / 转在约」的中间态
     ...(isContract && onRenew && !isLost ? [{ label: '续约', onClick: onRenew }] : []),
     // 只有跟进类 New 客户可以转为在约：续约跟进（renew）本身已关联在约合同，再转会生成第二条在约记录
-    ...(customerType === 'prospect' && customer.category === 'new' && onConvert && !isLost
+    ...(customerType === 'prospect' && customer.category === 'new' && onConvert && !isLost && !isWatching
       ? [{ label: '转为在约', onClick: onConvert }]
       : []),
-    ...(isLost && onRestore ? [{ label: '恢复为进行中', onClick: onRestore }] : []),
-    ...(!isLost && !isPartner && onMarkLost ? [{ label: '标记为 Lost', onClick: onMarkLost }] : []),
+    // 长期观察：只改这条跟进记录的状态位（不新建客户），转入后不再安排定时跟进
+    ...(customerType === 'prospect' && customer.category === 'new' && onWatch && !isLost && !isWatching
+      ? [{ label: '转为长期观察', onClick: onWatch }]
+      : []),
+    ...((isLost || isWatching) && onRestore
+      ? [{ label: isWatching ? '恢复跟进' : '恢复为进行中', onClick: onRestore }]
+      : []),
+    ...(!isLost && !isWatching && !isPartner && onMarkLost ? [{ label: '标记为 Lost', onClick: onMarkLost }] : []),
     { label: '删除', danger: true, onClick: onDelete },
   ];
 
@@ -198,6 +206,17 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
         </div>
       )}
 
+      {isWatching && (
+        <div className="watch-hint">
+          <Icon name="eye" />
+          <span>
+            该客户处于长期观察（{customer.watchedAt ? `${formatDate(customer.watchedAt)} 转入` : '时间未记录'}）：
+            不再设置定时跟进时间，客户档案、SKU 与备注时间线保持原样，归档在「长期观察」页；
+            需要继续跟进时，请在「⋯ 更多 → 恢复跟进」。
+          </span>
+        </div>
+      )}
+
       <div className="detail-grid">
         {isContract ? (
           <>
@@ -222,7 +241,16 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
             <DetailItem label="联系人" value={customer.contact || '—'} />
             <DetailItem label="预计金额" value={`${formatMoney(customer.expectedAmount)} 元`} />
             <DetailItem label="上次跟进" value={customer.lastFollowUp ? formatDate(customer.lastFollowUp) : '—'} />
-            <DetailItem label="下次跟进" value={customer.nextFollowUp ? formatDate(customer.nextFollowUp) : '—'} />
+            <DetailItem
+              label="下次跟进"
+              value={
+                isWatching
+                  ? '—（长期观察不设定时跟进）'
+                  : customer.nextFollowUp
+                    ? formatDate(customer.nextFollowUp)
+                    : '—'
+              }
+            />
             {customer.category === 'renew' && (
               <DetailItem label="续约到期时间" value={customer.expiryDate ? formatDate(customer.expiryDate) : '—'} full />
             )}
@@ -233,6 +261,14 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
           <DetailItem
             label="状态"
             value={`Lost（已流失${customer.lostAt ? ` · ${formatDate(customer.lostAt)}` : ''}）`}
+            full
+          />
+        )}
+        {/* 长期观察状态：同样只多一行状态说明，档案字段保持不变 */}
+        {isWatching && (
+          <DetailItem
+            label="状态"
+            value={`长期观察（${customer.watchedAt ? `${formatDate(customer.watchedAt)} 转入` : '时间未记录'} · 不设定时跟进）`}
             full
           />
         )}

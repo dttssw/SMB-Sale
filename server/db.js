@@ -70,8 +70,9 @@ db.exec(`
     expiryDate     TEXT,                 -- renew 跟进对应的在约到期时间（冗余，便于展示）
     plan           TEXT DEFAULT '',      -- renew 跟进的 SKU（与在约记录同步，用于自动补建在约）
     skus           TEXT DEFAULT '[]',    -- SKU 列表（JSON 数组文本，plan 为第一条）
-    status         TEXT DEFAULT 'active',-- 'active' | 'lost'（lost = 已流失，归档到「Lost 客户」页）
+    status         TEXT DEFAULT 'active',-- 'active' | 'lost'（已流失）| 'watching'（长期观察）
     lostAt         TEXT,                 -- 标记 lost 的日期（客户档案保持原样，只变状态位）
+    watchedAt      TEXT,                 -- 转入「长期观察」的日期（同上，只是状态位）
     note           TEXT DEFAULT '',
     createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -215,6 +216,13 @@ for (const table of ['contracts', 'prospects']) {
   if (!cols.includes('status')) db.exec(`ALTER TABLE ${table} ADD COLUMN status TEXT DEFAULT 'active'`);
   if (!cols.includes('lostAt')) db.exec(`ALTER TABLE ${table} ADD COLUMN lostAt TEXT`);
 }
+
+// 迁移：长期观察 —— 跟进角色增加 watchedAt（转入长期观察的日期，幂等）。
+// 「长期观察」与 lost 一样只是 prospects 行上的状态位（status = 'watching'）：
+// 客户主档（customers）、SKU、金额与备注时间线原样保留，同一客户始终只有一条角色行；
+// 客户只是从「客户跟进」移到左侧「长期观察」页，且不再安排定时跟进（nextFollowUp 置空）。
+const watchCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
+if (!watchCols.includes('watchedAt')) db.exec(`ALTER TABLE prospects ADD COLUMN watchedAt TEXT`);
 
 // 迁移：把「同日合并」的历史备注拆分成独立备注，让每条备注都能单独编辑 / 删除（与「今日工作记录」一致）。
 // 旧版本会把同一天（本地时区）的多条备注合并成一条，以 [HH:MM] 作为时间标记；新版本取消合并、每条备注独立成行，
