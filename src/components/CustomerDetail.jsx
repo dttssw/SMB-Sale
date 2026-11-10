@@ -230,7 +230,6 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
         ) : isPartner ? (
           <>
             <DetailItem label="合作伙伴名称" value={customer.name} full />
-            <DetailItem label="联系人" value={customer.contact || '—'} />
           </>
         ) : (
           <>
@@ -273,6 +272,11 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
           />
         )}
       </div>
+
+      {/* 合作伙伴不再有单一「联系人」字段：一个合作伙伴可能有多个联系人，逐条写在备注时间线里 */}
+      {isPartner && (
+        <p className="field-hint">联系人请逐条写在下方「备注记录」里，一个合作伙伴可以记录多个联系人。</p>
+      )}
 
       <div className="note-section">
         <div className="note-head">

@@ -57,7 +57,7 @@ const COLUMNS = {
   contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId', 'status', 'lostAt'],
   prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId', 'status', 'lostAt', 'watchedAt'],
   deals: ['id', 'customer', 'type', 'amount', 'date'],
-  partners: ['id', 'name', 'contact', 'note'],
+  partners: ['id', 'name', 'note'],
   worklogs: ['id', 'content', 'date'],
 };
 

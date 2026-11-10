@@ -38,7 +38,9 @@ export default function PartnerList({ partners, onAdd, onView }) {
       <div className="panel-head">
         <div>
           <h2>合作伙伴</h2>
-          <p className="panel-desc">登记合作伙伴，可随时为其提交备注记录（不占用签约 / 金额跟进）</p>
+          <p className="panel-desc">
+            登记合作伙伴，可随时为其提交备注记录（联系人可记录多条，统一写在备注时间线里；不占用签约 / 金额跟进）
+          </p>
         </div>
         <div className="panel-head-ops">
           <ListTools
@@ -63,7 +65,6 @@ export default function PartnerList({ partners, onAdd, onView }) {
           <thead>
             <tr>
               <th>合作伙伴名称</th>
-              <th className="col-opt">联系人</th>
               <th className="ops">操作</th>
             </tr>
           </thead>
@@ -75,7 +76,6 @@ export default function PartnerList({ partners, onAdd, onView }) {
                     {p.name}
                   </button>
                 </td>
-                <td className="col-opt">{p.contact || '—'}</td>
                 <td className="ops">
                   <span className="row-chevron">
                     <Icon name="chevronRight" />
@@ -85,7 +85,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
             ))}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={3} className="empty">
+                <td colSpan={2} className="empty">
                   <div className="empty-state">
                     <p>暂无合作伙伴，可登记渠道商 / 代理商并随时补备注</p>
                     <button type="button" className="btn btn-secondary" onClick={onAdd}>

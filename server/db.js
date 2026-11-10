@@ -89,7 +89,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS partners (
     id        TEXT PRIMARY KEY,
     name      TEXT NOT NULL,
-    contact   TEXT DEFAULT '',
     note      TEXT DEFAULT '',
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -137,6 +136,36 @@ for (const table of ['contracts', 'prospects']) {
   if (cols.some((c) => c.name === 'owner')) {
     db.exec(`ALTER TABLE ${table} DROP COLUMN owner`);
     console.log(`✅ 已从 ${table} 表移除遗留字段 owner`);
+  }
+}
+
+// 迁移：移除合作伙伴的单一「联系人」字段（一个合作伙伴可能有多个联系人，联系人改为逐条记在备注时间线）。
+// 为了不丢历史信息：先把非空的 contact 写进该合作伙伴的备注时间线（customerType='partner'），
+// 再移除 partners.contact 列；幂等（列不存在时直接跳过）。
+const partnerColsBefore = db.prepare(`PRAGMA table_info(partners)`).all().map((c) => c.name);
+if (partnerColsBefore.includes('contact')) {
+  const rows = db
+    .prepare(`SELECT id, contact FROM partners WHERE contact IS NOT NULL AND TRIM(contact) != ''`)
+    .all();
+  let movedContacts = 0;
+  const existsNote = db.prepare(
+    `SELECT 1 FROM notes WHERE customerType = 'partner' AND customerId = ? AND content = ?`
+  );
+  for (const r of rows) {
+    const content = `联系人：${String(r.contact).trim()}`;
+    if (existsNote.get(r.id, content)) continue;
+    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, 'partner', ?, ?)`).run(
+      crypto.randomUUID(),
+      r.id,
+      content
+    );
+    movedContacts++;
+  }
+  db.exec(`ALTER TABLE partners DROP COLUMN contact`);
+  if (movedContacts > 0) {
+    console.log(`✅ 已将 ${movedContacts} 条合作伙伴联系人迁移到备注时间线，并从 partners 表移除 contact 字段`);
+  } else {
+    console.log('✅ 已从 partners 表移除 contact 字段（合作伙伴联系人改为备注时间线，可记录多个）');
   }
 }
 
