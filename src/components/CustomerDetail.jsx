@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import Badge from './Badge.jsx';
 import Icon from './icons.jsx';
-import { formatDate, formatNoteDate, formatNoteTime, formatCnDate, isInCurrentWeek, todayStr } from '../utils/date.js';
+import { formatDate, formatNoteDate, formatNoteTime, formatCnDate, isInCurrentWeek, todayStr, daysUntil } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { stageOf } from '../data/constants.js';
+import { stageOf, RENEW_WINDOW_DAYS } from '../data/constants.js';
 import { skusOf } from '../utils/sku.js';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -19,13 +20,25 @@ function dayLabel(date) {
   return formatCnDate(date);
 }
 
-function DetailItem({ label, value, full }) {
+// 档案条目：左标签 / 右取值（同一行对齐），比上下堆叠扫读更快
+function Fact({ label, value }) {
   return (
-    <div className={`detail-item${full ? ' full' : ''}`}>
-      <span className="detail-label">{label}</span>
-      <span className="detail-value">{value}</span>
+    <div className="detail-fact">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   );
+}
+
+// 在约客户的订阅状态：与「在约客户」列表 / 临期提醒共用同一套语义
+// （逾期 → danger，距离到期 ≤ 续约窗口 → warn，其余 → ok）
+function expiryBadge(expiryDate) {
+  const d = daysUntil(expiryDate);
+  if (d == null) return null;
+  if (d < 0) return { label: `已逾期 ${-d} 天`, tone: 'danger' };
+  if (d === 0) return { label: '今日到期', tone: 'danger' };
+  if (d <= RENEW_WINDOW_DAYS) return { label: `还剩 ${d} 天到期`, tone: 'warn' };
+  return { label: '正常在约', tone: 'ok' };
 }
 
 export default function CustomerDetail({ customerType, customer, onEdit, onRenew, onConvert, onWatch, onDelete, onMarkLost, onRestore, onNotesChanged }) {
@@ -168,34 +181,12 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
     { label: '删除', danger: true, onClick: onDelete },
   ];
 
+  // 在约客户在标题下带一枚订阅状态；跟进客户带当前阶段；归档记录带状态标签
+  const stage = stageOf(customer.stage);
+  const expiry = isContract ? expiryBadge(customer.expiryDate) : null;
+
   return (
     <div className="customer-detail">
-      <div className="detail-actions">
-        <div className="menu">
-          <button type="button" className="btn btn-ghost" onClick={() => setMenuOpen((v) => !v)}>
-            <Icon name="more" />
-            更多
-          </button>
-          {menuOpen && (
-            <div className="menu-panel">
-              {items.map((it) => (
-                <button
-                  key={it.label}
-                  type="button"
-                  className={`menu-item${it.danger ? ' danger' : ''}`}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    it.onClick();
-                  }}
-                >
-                  {it.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
       {isLost && (
         <div className="lost-hint">
           <Icon name="alert" />
@@ -217,173 +208,210 @@ export default function CustomerDetail({ customerType, customer, onEdit, onRenew
         </div>
       )}
 
-      <div className="detail-grid">
-        {isContract ? (
-          <>
-            <DetailItem label="客户名称" value={customer.name} full />
-            <DetailItem label="SKU" value={skuValue} />
-            <DetailItem label="联系人" value={customer.contact || '—'} />
-            <DetailItem label="合同金额" value={`${formatMoney(customer.contractAmount)} 元`} />
-            <DetailItem label="订阅开始时间" value={formatDate(customer.startDate)} />
-            <DetailItem label="订阅到期时间" value={formatDate(customer.expiryDate)} full />
-          </>
-        ) : isPartner ? (
-          <>
-            <DetailItem label="合作伙伴名称" value={customer.name} full />
-          </>
-        ) : (
-          <>
-            <DetailItem label="客户名称" value={customer.name} full />
-            <DetailItem label="跟进阶段" value={stageOf(customer.stage).label} />
-            {/* SKU：跟进板块（New / Renew）与在约客户共用同一字段，支持多条 */}
-            <DetailItem label="SKU" value={skuValue} />
-            <DetailItem label="联系人" value={customer.contact || '—'} />
-            <DetailItem label="预计金额" value={`${formatMoney(customer.expectedAmount)} 元`} />
-            <DetailItem label="上次跟进" value={customer.lastFollowUp ? formatDate(customer.lastFollowUp) : '—'} />
-            <DetailItem
-              label="下次跟进"
-              value={
-                isWatching
-                  ? '—（长期观察不设定时跟进）'
-                  : customer.nextFollowUp
-                    ? formatDate(customer.nextFollowUp)
-                    : '—'
-              }
-            />
-            {customer.category === 'renew' && (
-              <DetailItem label="续约到期时间" value={customer.expiryDate ? formatDate(customer.expiryDate) : '—'} full />
-            )}
-          </>
-        )}
-        {/* 流失状态：档案字段保持不变，只多一行状态说明（时间是标记 lost 的日期） */}
-        {isLost && (
-          <DetailItem
-            label="状态"
-            value={`Lost（已流失${customer.lostAt ? ` · ${formatDate(customer.lostAt)}` : ''}）`}
-            full
-          />
-        )}
-        {/* 长期观察状态：同样只多一行状态说明，档案字段保持不变 */}
-        {isWatching && (
-          <DetailItem
-            label="状态"
-            value={`长期观察（${customer.watchedAt ? `${formatDate(customer.watchedAt)} 转入` : '时间未记录'} · 不设定时跟进）`}
-            full
-          />
-        )}
-      </div>
-
-      {/* 合作伙伴不再有单一「联系人」字段：一个合作伙伴可能有多个联系人，逐条写在备注时间线里 */}
-      {isPartner && (
-        <p className="field-hint">联系人请逐条写在下方「备注记录」里，一个合作伙伴可以记录多个联系人。</p>
-      )}
-
-      <div className="note-section">
-        <div className="note-head">
-          <h4>备注记录</h4>
-          {notes.length > 0 && (
-            <span className="note-head-ops">
-              <span className="note-view-toggle">
-                <button
-                  type="button"
-                  className={noteView === 'week' ? 'active' : ''}
-                  onClick={() => setNoteView('week')}
-                >
-                  本周
-                </button>
-                <button
-                  type="button"
-                  className={noteView === 'all' ? 'active' : ''}
-                  onClick={() => setNoteView('all')}
-                >
-                  全部（{notes.length}）
-                </button>
-              </span>
-            </span>
-          )}
-        </div>
-        <form className="note-form" onSubmit={addNote}>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="填写备注内容，保存后按系统时间同步到时间线"
-          />
-          <div className="note-form-foot">
-            <span className="note-form-hint">提交后按当前系统时间归档</span>
-            <button type="submit" className="btn btn-primary" disabled={!text.trim()}>
-              提交备注
-            </button>
-          </div>
-        </form>
-        {noteError && <div className="form-error">{noteError}</div>}
-
-        {notesLoading ? (
-          <div className="note-empty">加载备注中…</div>
-        ) : displayNotes.length === 0 ? (
-          <div className="note-empty">
-            {noteView === 'all'
-              ? '暂无备注，可填写并提交第一条汇总'
-              : hiddenCount > 0
-                ? '本周暂无备注，可填写并提交第一条汇总'
-                : '暂无备注，可填写并提交第一条汇总'}
-          </div>
-        ) : (
-          <div className="note-list">
-            {groupedNotes.map((g) => (
-              <div key={g.date} className="note-day">
-                <div className="note-day-head">
-                  <span>{dayLabel(g.date)}</span>
-                  <span className="note-day-count">{g.items.length} 条</span>
+      {/* 左「客户档案」/ 右「备注时间线」两栏：
+          备注是最常翻的内容，给它整栏空间；档案固定在左侧，翻历史记录时不会滚走 */}
+      <div className="customer-detail-grid">
+        <aside className="detail-aside" aria-label="客户档案">
+          <div className="detail-aside-head">
+            <div className="detail-aside-title">
+              <h4 className="detail-name" title={customer.name}>
+                {customer.name}
+              </h4>
+              <div className="detail-badges">
+                {isLost && <Badge tone="danger">Lost</Badge>}
+                {isWatching && <Badge tone="info">长期观察</Badge>}
+                {!isContract && !isPartner && <Badge tone={stage.tone}>{stage.label}</Badge>}
+                {expiry && <Badge tone={expiry.tone}>{expiry.label}</Badge>}
+              </div>
+            </div>
+            {/* 「⋯ 更多」放在标题行右侧：操作与客户名同屏，不占用档案与备注的空间 */}
+            <div className="menu">
+              <button type="button" className="btn btn-ghost" onClick={() => setMenuOpen((v) => !v)}>
+                <Icon name="more" />
+                更多
+              </button>
+              {menuOpen && (
+                <div className="menu-panel">
+                  {items.map((it) => (
+                    <button
+                      key={it.label}
+                      type="button"
+                      className={`menu-item${it.danger ? ' danger' : ''}`}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        it.onClick();
+                      }}
+                    >
+                      {it.label}
+                    </button>
+                  ))}
                 </div>
-                {g.items.map((n) => (
-                  <div key={n.id} className="note-item">
-                    <div className="note-meta">
-                      <span className="note-time">{formatNoteTime(n.createdAt).slice(11, 16)}</span>
-                      <span className="note-ops">
-                        <button className="link-btn" onClick={() => startEditNote(n)}>
-                          编辑
-                        </button>
-                        <button className="link-btn danger" onClick={() => removeNote(n.id)}>
-                          删除
-                        </button>
-                      </span>
-                    </div>
-                    {editId === n.id ? (
-                      <div className="note-edit">
-                        <textarea value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus />
-                        <div className="note-edit-actions">
-                          <span className="note-form-hint">保存后将覆盖该条备注</span>
-                          <div>
-                            <button type="button" className="link-btn" onClick={cancelEditNote}>
-                              取消
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-primary btn-sm"
-                              onClick={saveEditNote}
-                              disabled={!editText.trim()}
-                            >
-                              保存
-                            </button>
+              )}
+            </div>
+          </div>
+
+          <div className="detail-aside-scroll">
+            {!isPartner && (
+              <dl className="detail-facts">
+                {isContract ? (
+                  <>
+                    <Fact label="联系人" value={customer.contact || '—'} />
+                    <Fact label="SKU" value={skuValue} />
+                    <Fact label="合同金额" value={`${formatMoney(customer.contractAmount)} 元`} />
+                    <Fact label="订阅开始时间" value={formatDate(customer.startDate)} />
+                    <Fact label="订阅到期时间" value={formatDate(customer.expiryDate)} />
+                  </>
+                ) : (
+                  <>
+                    <Fact label="联系人" value={customer.contact || '—'} />
+                    {/* SKU：跟进板块（New / Renew）与在约客户共用同一字段，支持多条 */}
+                    <Fact label="SKU" value={skuValue} />
+                    <Fact label="预计金额" value={`${formatMoney(customer.expectedAmount)} 元`} />
+                    <Fact
+                      label="上次跟进"
+                      value={customer.lastFollowUp ? formatDate(customer.lastFollowUp) : '—'}
+                    />
+                    <Fact
+                      label="下次跟进"
+                      value={
+                        isWatching
+                          ? '—（长期观察不设定时跟进）'
+                          : customer.nextFollowUp
+                            ? formatDate(customer.nextFollowUp)
+                            : '—'
+                      }
+                    />
+                    {customer.category === 'renew' && (
+                      <Fact
+                        label="续约到期时间"
+                        value={customer.expiryDate ? formatDate(customer.expiryDate) : '—'}
+                      />
+                    )}
+                  </>
+                )}
+              </dl>
+            )}
+
+            {/* 合作伙伴不再有单一「联系人」字段：一个合作伙伴可能有多个联系人，逐条写在备注时间线里 */}
+            {isPartner && (
+              <p className="field-hint">联系人请逐条写在右侧「备注记录」里，一个合作伙伴可以记录多个联系人。</p>
+            )}
+          </div>
+        </aside>
+
+        {/* 右栏：填写区固定在顶部，时间线在自身区域内滚动（不再和档案抢高度） */}
+        <section className="note-section" aria-label="备注记录">
+          <div className="note-head">
+            <div className="note-head-title">
+              <h4>备注记录</h4>
+              <span className="note-head-sub">
+                {notes.length > 0 ? `共 ${notes.length} 条 · 本周 ${weekNotes.length} 条` : '按系统时间归档'}
+              </span>
+            </div>
+            {notes.length > 0 && (
+              <span className="note-head-ops">
+                <span className="note-view-toggle">
+                  <button
+                    type="button"
+                    className={noteView === 'week' ? 'active' : ''}
+                    onClick={() => setNoteView('week')}
+                  >
+                    本周
+                  </button>
+                  <button
+                    type="button"
+                    className={noteView === 'all' ? 'active' : ''}
+                    onClick={() => setNoteView('all')}
+                  >
+                    全部（{notes.length}）
+                  </button>
+                </span>
+              </span>
+            )}
+          </div>
+          <form className="note-form" onSubmit={addNote}>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="写一条跟进记录：沟通了谁、聊到哪一步、下一步做什么"
+            />
+            <div className="note-form-foot">
+              <span className="note-form-hint">提交后按当前系统时间归档</span>
+              <button type="submit" className="btn btn-primary" disabled={!text.trim()}>
+                提交备注
+              </button>
+            </div>
+          </form>
+          {noteError && <div className="form-error">{noteError}</div>}
+
+          {notesLoading ? (
+            <div className="note-empty">加载备注中…</div>
+          ) : displayNotes.length === 0 ? (
+            <div className="note-empty">
+              {noteView === 'all'
+                ? '暂无备注，可填写并提交第一条汇总'
+                : hiddenCount > 0
+                  ? '本周暂无备注，可填写并提交第一条汇总'
+                  : '暂无备注，可填写并提交第一条汇总'}
+            </div>
+          ) : (
+            <div className="note-list">
+              {groupedNotes.map((g) => (
+                <div key={g.date} className="note-day">
+                  <div className="note-day-head">
+                    <span>{dayLabel(g.date)}</span>
+                    <span className="note-day-count">{g.items.length} 条</span>
+                  </div>
+                  {g.items.map((n) => (
+                    <div key={n.id} className="note-item">
+                      <div className="note-meta">
+                        <span className="note-time">{formatNoteTime(n.createdAt).slice(11, 16)}</span>
+                        <span className="note-ops">
+                          <button type="button" className="link-btn" onClick={() => startEditNote(n)}>
+                            编辑
+                          </button>
+                          <button type="button" className="link-btn danger" onClick={() => removeNote(n.id)}>
+                            删除
+                          </button>
+                        </span>
+                      </div>
+                      {editId === n.id ? (
+                        <div className="note-edit">
+                          <textarea value={editText} onChange={(e) => setEditText(e.target.value)} autoFocus />
+                          <div className="note-edit-actions">
+                            <span className="note-form-hint">保存后将覆盖该条备注</span>
+                            <div>
+                              <button type="button" className="link-btn" onClick={cancelEditNote}>
+                                取消
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-primary btn-sm"
+                                onClick={saveEditNote}
+                                disabled={!editText.trim()}
+                              >
+                                保存
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="note-content">{n.content}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
+                      ) : (
+                        <div className="note-content">{n.content}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
 
-        {noteView === 'week' && hiddenCount > 0 && (
-          <button type="button" className="work-hidden-note" onClick={() => setNoteView('all')}>
-            <Icon name="chevronDown" />
-            更早的 {hiddenCount} 条备注已隐藏 · 点击查看全部
-          </button>
-        )}
+          {noteView === 'week' && hiddenCount > 0 && (
+            <button type="button" className="work-hidden-note" onClick={() => setNoteView('all')}>
+              <Icon name="chevronDown" />
+              更早的 {hiddenCount} 条备注已隐藏 · 点击查看全部
+            </button>
+          )}
+        </section>
       </div>
     </div>
   );

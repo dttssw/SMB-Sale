@@ -26,6 +26,11 @@ import CustomerDetail from './components/CustomerDetail.jsx';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
 const modalTitle = (m) => {
+  if (m.kind === 'detail') {
+    if (m.customerType === 'contract') return '在约客户详情';
+    if (m.customerType === 'partner') return '合作伙伴详情';
+    return '跟进客户详情';
+  }
   if (m.kind === 'contract') return m.data ? '编辑在约客户' : '新增在约客户';
   if (m.kind === 'convert') return '跟进客户转为在约客户';
   if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
@@ -766,6 +771,7 @@ export default function App() {
           onClose={() => setModal(null)}
           error={actionError}
           wide={modal.kind !== 'detail'}
+          detail={modal.kind === 'detail'}
         >
           {modal.kind === 'contract' && (
             <ContractForm
