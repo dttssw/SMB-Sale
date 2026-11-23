@@ -157,6 +157,14 @@ ensureColumn('deals', 'projectId', 'TEXT');
 ensureColumn('deals', 'customerId', 'TEXT');
 // 每条 SKU 各自的个数（JSON，键为 SKU 名）；项目整体数量由各条 SKU 汇总得出，不再单独存
 ensureColumn('projects', 'skuQty', "TEXT NOT NULL DEFAULT '{}'");
+// 历史字段清理：projects.quantity 已废弃（数量只存在 skuQty 里），老库启动时顺手删掉
+if (tableExists('projects') && columnsOf('projects').includes('quantity')) {
+  try {
+    db.exec('ALTER TABLE projects DROP COLUMN quantity');
+  } catch (err) {
+    console.warn('未能删除历史字段 projects.quantity：', err.message);
+  }
+}
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(projectId);
   CREATE INDEX IF NOT EXISTS idx_deals_project ON deals(projectId);

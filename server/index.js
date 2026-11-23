@@ -131,7 +131,10 @@ function daysUntil(dateStr) {
 
 const PROJECT_SELECT = `
   SELECT
-    p.*,
+    p.id, p.name, p.customerId, p.partnerId, p.category, p.status, p.contact,
+    p.expectedAmount, p.contractAmount, p.skus, p.skuQty,
+    p.lastFollowUp, p.nextFollowUp, p.startDate, p.expiryDate,
+    p.sourceProjectId, p.lostAt, p.watchedAt, p.createdAt, p.closedAt,
     c.name AS customerName,
     c.contact AS customerContact,
     pa.name AS partnerName,
