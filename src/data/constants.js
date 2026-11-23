@@ -1,5 +1,4 @@
-// 客户 SKU（数据库字段 plan 保留第一条作为主 SKU，完整列表存于 skus 字段）
-// 所有客户（在约 / 客户跟进 New / 续约跟进 Renew）都带这个字段，且可配置多条
+// 项目 SKU：project.skus 为完整数组，展示与编辑共用这一套选项。
 export const SKUS = [
   '专业版',
   '旗舰版',
@@ -12,25 +11,12 @@ export const SKUS = [
   'PS人天服务',
 ];
 
-export const STAGES = [
-  { key: 'initial', label: '初次沟通', tone: 'info' },
-  { key: 'requirement', label: '需求确认', tone: 'violet' },
-  { key: 'demo', label: '方案演示', tone: 'primary' },
-  { key: 'negotiation', label: '商务谈判', tone: 'warn' },
-  { key: 'contract', label: '待签约', tone: 'ok' },
-];
+export const PROJECT_STATUS = {
+  active: '项目跟进',
+  watching: '长期观察',
+  won: '已签项目',
+  lost: 'Lost 项目',
+};
 
-export function stageOf(key) {
-  return STAGES.find((s) => s.key === key) || STAGES[0];
-}
-
-export function skuOf(key) {
-  return SKUS.includes(key) ? key : SKUS[0];
-}
-
-// 续约提醒窗口（天）：默认 60 天（约两个月）。订阅到期日距今 ≤ 该天数即视为「临期」。
-// 「续约跟进」板块只存放临期客户（距到期 ≤ 该天数，含已逾期）：
-//   距到期更久的在约客户不进续约跟进，只待在「在约客户」板块，等临期时自动带出。
-// 修改这一个值会同时影响：总览统计、在约客户列表、临期提醒条、续约跟进列表。
-// 注意：后端 server/index.js 的 RENEW_WINDOW_DAYS 必须与本值保持一致（后端不能直接 import 前端模块）。
+// 续约提醒窗口（天）：只用于提醒与自动创建续约项目，不删除项目。
 export const RENEW_WINDOW_DAYS = 60;

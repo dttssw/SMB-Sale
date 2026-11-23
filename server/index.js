@@ -8,17 +8,20 @@ import multer from 'multer';
 import { db, toUtf8, normalizeCustomerName } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3001;
+const PORT = Number(process.env.PORT || 3001);
 const DIST_DIR = path.join(__dirname, '..', 'dist');
-
-// ---- 材料库：上传文件存储目录（已 gitignore，随部署保留） ----
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
+const RENEW_WINDOW_DAYS = 60;
+const ACTIVE = 'active';
+const WATCHING = 'watching';
+const WON = 'won';
+const LOST = 'lost';
+const STATUSES = [ACTIVE, WATCHING, WON, LOST];
+const CATEGORY = ['new', 'renew'];
+
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// 上传大小上限：100MB
 const MAX_UPLOAD_SIZE = 100 * 1024 * 1024;
-
-// 禁止上传的可执行 / 脚本类型（防止服务器与浏览器侧风险）
 const BLOCKED_EXT = new Set([
   '.exe', '.bat', '.cmd', '.com', '.scr', '.msi', '.apk', '.jar',
   '.sh', '.bash', '.ps1', '.vbs', '.js', '.mjs', '.cjs', '.ts',
@@ -35,219 +38,51 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_SIZE },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (BLOCKED_EXT.has(ext)) {
-      return cb(new Error(`不支持上传该类型文件：${ext || '未知'}`));
-    }
+    if (BLOCKED_EXT.has(ext)) return cb(new Error(`不支持上传该类型文件：${ext || '未知'}`));
     cb(null, true);
   },
 });
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  next();
-});
-
-// ---- 表结构与字段白名单（表名只允许取自白名单，杜绝注入） ----
-const TABLES = ['contracts', 'prospects', 'deals', 'partners', 'worklogs'];
-
-const COLUMNS = {
-  contracts: ['id', 'name', 'plan', 'skus', 'contact', 'contractAmount', 'startDate', 'expiryDate', 'note', 'customerId', 'status', 'lostAt'],
-  prospects: ['id', 'name', 'stage', 'contact', 'expectedAmount', 'lastFollowUp', 'nextFollowUp', 'note', 'category', 'contractId', 'expiryDate', 'plan', 'skus', 'customerId', 'status', 'lostAt', 'watchedAt'],
-  deals: ['id', 'customer', 'type', 'amount', 'date'],
-  partners: ['id', 'name', 'note'],
-  worklogs: ['id', 'content', 'date'],
+const uid = () => Date.now().toString(36) + crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+const trim = (value) => String(value ?? '').trim();
+const num = (value, fallback = 0) => {
+  if (value === '' || value == null) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const REQUIRED = {
-  contracts: ['id', 'name', 'plan', 'contractAmount', 'startDate', 'expiryDate'],
-  prospects: ['id', 'name', 'stage', 'expectedAmount'],
-  deals: ['id', 'customer', 'type', 'amount', 'date'],
-  partners: ['id', 'name'],
-  worklogs: ['id', 'content', 'date'],
-};
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
 
-const NUMBER_COLS = {
-  contracts: ['contractAmount'],
-  prospects: ['expectedAmount'],
-  deals: ['amount'],
-  partners: [],
-  worklogs: [],
-};
-
-const NOT_FOUND = (table) => TABLES.includes(table);
-
-// ---- 流失（lost）状态 ----
-// lost 只是角色行上的一个状态位：客户主档（customers）、备注时间线与全部业务字段保持原样，
-// 客户从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（分 new-lost / renew-lost）。
-const ACTIVE = 'active';
-const LOST = 'lost';
-// ---- 长期观察（watching）状态 ----
-// 同样是 prospects 行上的状态位：客户主档、SKU、金额与备注时间线原样保留，
-// 同一客户始终只有一条跟进记录；客户从「客户跟进」移到左侧「长期观察」页，
-// 且不再安排定时跟进（nextFollowUp 置空，备注重算时也不会再写回）。
-const WATCHING = 'watching';
-const STATUSES = [ACTIVE, LOST, WATCHING];
-const normalizeStatus = (value) => (STATUSES.includes(value) ? value : ACTIVE);
-const isLost = (row) => row?.status === LOST;
-const isWatching = (row) => row?.status === WATCHING;
-// SQL 片段：只统计「进行中」的角色行（历史数据 status 为空按 active 处理）
-const NOT_LOST = `COALESCE(NULLIF(status, ''), 'active') != 'lost'`;
-
-function sanitize(table, body) {
-  const allowed = COLUMNS[table];
-  const row = {};
-  for (const key of allowed) {
-    if (body[key] !== undefined && body[key] !== null) row[key] = body[key];
-  }
-  // 多 SKU：前端传 skus 数组（历史接口可能只传 plan）→ 统一存 JSON 数组文本，
-  // 并把第一条写回 plan，保证续约 / 在约等既有逻辑继续以主 SKU 为准。
-  if (table === 'contracts' || table === 'prospects') {
-    const list = parseSkuList(row.skus !== undefined ? row.skus : row.plan);
-    const effective = list.length ? list : parseSkuList(row.plan);
-    if (effective.length) {
-      row.skus = JSON.stringify(effective);
-      row.plan = effective[0];
+function parseSkus(value) {
+  if (Array.isArray(value)) return [...new Set(value.map(trim).filter(Boolean))];
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return [...new Set(parsed.map(trim).filter(Boolean))];
+      if (typeof parsed === 'string') return [parsed.trim()].filter(Boolean);
+    } catch {
+      return [value.trim()].filter(Boolean);
     }
   }
-  for (const key of REQUIRED[table]) {
-    if (row[key] === undefined || row[key] === null || row[key] === '') {
-      const err = new Error(`缺少必填字段: ${key}`);
-      err.status = 400;
-      throw err;
-    }
-  }
-  // 流失 / 长期观察标记：status 只接受 active / lost / watching（其余值一律按 active）；
-  // lostAt 只在 lost 时保留，watchedAt 只在 watching 时保留（两个状态互斥）
-  if (table === 'contracts' || table === 'prospects') {
-    if (row.status !== undefined) row.status = normalizeStatus(row.status);
-    if (row.status === ACTIVE) {
-      row.lostAt = null;
-      if (table === 'prospects') row.watchedAt = null;
-    }
-    if (row.status === LOST && table === 'prospects') row.watchedAt = null;
-    if (row.status === WATCHING) {
-      // 长期观察只适用于跟进角色（在约客户没有这个状态）
-      if (table === 'contracts') {
-        row.status = ACTIVE;
-      } else {
-        // 长期观察客户不需要定时跟进：即使表单里带了日期也不落库
-        row.lostAt = null;
-        row.nextFollowUp = null;
-      }
-    }
-  }
-  for (const key of NUMBER_COLS[table]) {
-    row[key] = Number(row[key]);
-    if (!Number.isFinite(row[key])) {
-      const err = new Error(`字段 ${key} 必须是数字`);
-      err.status = 400;
-      throw err;
-    }
-  }
-  return row;
+  return [];
 }
 
-function findRow(table, id) {
-  return db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+function withSkus(row) {
+  if (!row) return row;
+  return { ...row, skus: parseSkus(row.skus) };
 }
 
-// ---- 客户主档（统一档案）----
-// 同一家公司在「跟进 / 在约」板块通过 customerId 指向同一条 customers 记录，
-// 使名称 / 联系人 / 备注全局一致，不再复制粘贴。合作伙伴（partners）保持独立档案。
-// 客户名唯一：名称即身份标识（同一名称 = 同一家公司），同名只允许一条 customers 记录。
-function customerById(id) {
-  return db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id);
-}
-
-// 按名称查已有客户主档（名称已规范化，直接用等值匹配）
-function findCustomerByName(name) {
-  const clean = normalizeCustomerName(name);
-  if (!clean) return null;
-  return db.prepare(`SELECT * FROM customers WHERE name = ? ORDER BY createdAt ASC LIMIT 1`).get(clean);
-}
-
-// 客户名 / 客户档案冲突统一用 409 + 可读提示返回（前端弹窗与页头横幅都会展示）
-function conflict(message) {
-  const e = new Error(message);
-  e.status = 409;
-  return e;
-}
-
-// 客户名唯一：改名撞到别的客户时直接拒绝，避免出现两条同名主档（备注时间线也会被拆散）
-function assertCustomerNameFree(name, selfId) {
-  const clash = db
-    .prepare(`SELECT id, name FROM customers WHERE name = ? AND id != ? ORDER BY createdAt ASC LIMIT 1`)
-    .get(normalizeCustomerName(name), String(selfId || ''));
-  if (clash) {
-    throw conflict(`客户名称「${clash.name}」已存在（客户名唯一）：请直接在已有客户上编辑，或换一个名称`);
-  }
-}
-
-// 把某客户主档的姓名 / 联系人同步镜像到所有指向它的在约 / 跟进角色行，保证各板块看到一致资料
-function mirrorCustomer(customerId) {
-  const c = customerById(customerId);
-  if (!c) return;
-  db.prepare(`UPDATE contracts SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact, customerId);
-  db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact, customerId);
-}
-
-// 依据请求体解析 / 复用 / 创建客户主档，返回该主档的 { customerId, name, contact }。
-// 客户名唯一，优先级：
-//  1) 请求体带 customerId（转为在约 / 编辑角色行）→ 复用该主档；原主档已被删除时按名称兜底复用
-//  2) 名称已存在（新增客户时同名）→ 直接复用已有主档，不再新建（这正是过去出现同名客户的原因）
-//  3) 确实没有同名客户 → 新建主档
-function attachCustomerIdentity(table, body) {
-  const hasName = body && body.name != null;
-  const hasContact = body && body.contact != null;
-  const name = hasName ? normalizeCustomerName(body.name) : '';
-  const contact = hasContact ? String(body.contact).trim() : '';
-  let cid = body && body.customerId ? String(body.customerId) : '';
-  let c = cid ? customerById(cid) : null;
-  let reusedByName = false;
-
-  if (!c) {
-    const same = findCustomerByName(name);
-    if (same) {
-      // 同名客户：复用已有主档（含其备注时间线），避免同一家公司出现第二条档案
-      cid = same.id;
-      c = same;
-      reusedByName = true;
-    } else {
-      if (!name) {
-        const e = new Error('缺少必填字段: name');
-        e.status = 400;
-        throw e;
-      }
-      if (!cid) cid = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(cid, name, contact);
-      c = customerById(cid);
-    }
-  } else {
-    cid = c.id;
-  }
-
-  // 客户名唯一：改名撞到别的客户主档时拒绝
-  const newName = name || c.name;
-  if (newName !== c.name) assertCustomerNameFree(newName, cid);
-  // 复用了同名主档时，表单里的空联系人不应覆盖已有联系人（其余情况按表单原样保存）
-  const newContact = hasContact ? (reusedByName && !contact ? c.contact : contact) : c.contact;
-  if (newName !== c.name || newContact !== (c.contact || '')) {
-    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(newName, newContact || '', cid);
-  }
-  mirrorCustomer(cid);
-  const fresh = customerById(cid);
-  return { customerId: cid, name: fresh.name, contact: fresh.contact || '' };
-}
-
-// ---- 日期 / 备注相关工具（后端本地时区；SQLite datetime('now') 存的是 UTC）----
 const pad2 = (n) => String(n).padStart(2, '0');
 function dateKey(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-// 把 SQLite 返回的 UTC 时间字符串(YYYY-MM-DD HH:MM:SS) 转成本地 Date
+function localToday() {
+  return dateKey(new Date());
+}
 function localDateOfDb(createdAt) {
   return new Date(String(createdAt).replace(' ', 'T') + 'Z');
 }
@@ -255,276 +90,252 @@ function addDays(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const t = new Date(y, m - 1, d);
   t.setDate(t.getDate() + days);
-  return `${t.getFullYear()}-${pad2(t.getMonth() + 1)}-${pad2(t.getDate())}`;
+  return dateKey(t);
 }
 function daysUntil(dateStr) {
   if (!dateStr) return null;
-  const [y, m, d] = dateStr.split('-').map(Number);
+  const [y, m, d] = String(dateStr).split('-').map(Number);
+  if (!y || !m || !d) return null;
   const target = new Date(y, m - 1, d);
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.round((target - today) / 86400000);
+  return Math.round((target - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
 }
-// 取某客户主档最后一条备注的本地日期 → 其所有跟进角色的上次跟进日期，下次跟进为 3 天后
-function lastFollowUpDates(customerId) {
-  const last = db
-    .prepare(`SELECT createdAt FROM notes WHERE customerType = 'customer' AND customerId = ? ORDER BY createdAt DESC LIMIT 1`)
-    .get(customerId);
-  if (!last) return null;
-  const d = localDateOfDb(last.createdAt);
-  if (Number.isNaN(d.getTime())) return null;
-  const lf = dateKey(d);
-  return { lastFollowUp: lf, nextFollowUp: addDays(lf, 3) };
+
+const PROJECT_SELECT = `
+  SELECT
+    p.*,
+    c.name AS customerName,
+    c.contact AS customerContact,
+    pa.name AS partnerName,
+    sp.name AS sourceProjectName
+  FROM projects p
+  JOIN customers c ON c.id = p.customerId
+  LEFT JOIN partners pa ON pa.id = p.partnerId
+  LEFT JOIN projects sp ON sp.id = p.sourceProjectId
+`;
+
+function projectById(id) {
+  return db.prepare(`${PROJECT_SELECT} WHERE p.id = ?`).get(id);
 }
-// 重算某客户主档下所有跟进角色的上次/下次跟进日期。
-// 长期观察（status='watching'）的客户不需要定时跟进：只更新上次跟进，下次跟进保持为空，
-// 因此加备注也不会把它重新变成「逾期未跟进」。
-function updateFollowUpsForCustomer(customerId) {
-  const dates = lastFollowUpDates(customerId);
-  if (dates) {
-    db.prepare(
-      `UPDATE prospects SET lastFollowUp = ?, nextFollowUp = CASE WHEN COALESCE(NULLIF(status, ''), 'active') = ? THEN NULL ELSE ? END WHERE customerId = ?`
-    ).run(dates.lastFollowUp, WATCHING, dates.nextFollowUp, customerId);
-  }
+
+function customerById(id) {
+  return db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id);
 }
-// 更新所有跟进客户的上次/下次跟进日期（以客户主档备注时间线为准；长期观察客户不写下次跟进）
-function reindexProspectFollowUps() {
-  const pros = db.prepare(`SELECT id, customerId FROM prospects`).all();
-  for (const p of pros) {
-    if (!p.customerId) continue;
-    const dates = lastFollowUpDates(p.customerId);
-    if (dates) {
-      db.prepare(
-        `UPDATE prospects SET lastFollowUp = ?, nextFollowUp = CASE WHEN COALESCE(NULLIF(status, ''), 'active') = ? THEN NULL ELSE ? END WHERE id = ?`
-      ).run(dates.lastFollowUp, WATCHING, dates.nextFollowUp, p.id);
+
+function ensureCustomerExists(id) {
+  const customer = id ? customerById(id) : null;
+  if (!customer) throw httpError(400, '最终客户不存在，请选择有效客户');
+  return customer;
+}
+
+function ensurePartnerExists(id) {
+  if (!id) return null;
+  const partner = db.prepare(`SELECT * FROM partners WHERE id = ?`).get(id);
+  if (!partner) throw httpError(400, '合作伙伴不存在，请重新选择');
+  return partner;
+}
+
+function validateProjectPayload(input, existing = null) {
+  const customerId = trim(input.customerId ?? existing?.customerId);
+  ensureCustomerExists(customerId);
+  const partnerId = trim(input.partnerId ?? existing?.partnerId);
+  ensurePartnerExists(partnerId);
+
+  const categoryRaw = input.category !== undefined ? input.category : existing?.category;
+  const category = categoryRaw == null || categoryRaw === '' ? null : trim(categoryRaw);
+  if (category !== null && !CATEGORY.includes(category)) throw httpError(400, '项目类型只能是 new 或 renew');
+
+  const status = trim(input.status ?? existing?.status ?? ACTIVE);
+  if (!STATUSES.includes(status)) throw httpError(400, '项目状态无效');
+
+  const name = trim(input.name ?? existing?.name);
+  if (!name) throw httpError(400, '请填写项目名称');
+  if (status !== WON && !category) throw httpError(400, '进行中的项目必须选择 new 或 renew 类型');
+
+  const expectedAmount = num(input.expectedAmount ?? existing?.expectedAmount, 0);
+  if (expectedAmount < 0) throw httpError(400, '预计金额不能小于 0');
+
+  let contractAmount =
+    input.contractAmount !== undefined ? input.contractAmount : existing?.contractAmount;
+  contractAmount = contractAmount == null || contractAmount === '' ? null : num(contractAmount, NaN);
+  const startDate = trim(input.startDate ?? existing?.startDate) || null;
+  const expiryDate = trim(input.expiryDate ?? existing?.expiryDate) || null;
+  if (status === WON) {
+    if (!Number.isFinite(contractAmount) || contractAmount <= 0) throw httpError(400, '已签项目必须填写成交金额');
+    if (!startDate || !expiryDate) throw httpError(400, '已签项目必须填写订阅开始和到期时间');
+    if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
+  } else if (status === ACTIVE) {
+    contractAmount = null;
+    // 续约项目允许带原订阅到期日用于提醒；新签项目不保存合同周期。
+    if (category !== 'renew') {
+      return {
+        name,
+        customerId,
+        partnerId: partnerId || null,
+        category,
+        status,
+        contact: trim(input.contact ?? existing?.contact),
+        expectedAmount,
+        contractAmount: null,
+        startDate: null,
+        expiryDate: null,
+        skus: parseSkus(input.skus !== undefined ? input.skus : existing?.skus),
+        lastFollowUp: trim(input.lastFollowUp ?? existing?.lastFollowUp) || null,
+        nextFollowUp: trim(input.nextFollowUp ?? existing?.nextFollowUp) || null,
+      };
     }
   }
-}
-// ---- 在约 / 续约的统一判断逻辑（新建客户与历史数据共用同一套规则） ----
-// 续约窗口（天）：默认 60 天（约两个月）。只有距到期 ≤ 该天数的在约客户才进入「续约跟进」板块。
-// ⚠️ 需与前端 src/data/constants.js 的 RENEW_WINDOW_DAYS 保持一致（后端不能直接 import 前端模块）
-const RENEW_WINDOW_DAYS = 60;
 
-// 自动补建在约记录时的默认 SKU（与前端 src/data/constants.js 的 SKUS[0] 保持一致）
-const DEFAULT_PLAN = '专业版';
-
-// ---- 多 SKU 工具 ----
-// 数据库 skus 列存 JSON 数组文本，plan 始终保留第一条（主 SKU）；
-// 接口统一返回数组，前端表单 / 详情直接用，不需要再解析字符串。
-function parseSkuList(value) {
-  if (Array.isArray(value)) {
-    const out = [];
-    for (const item of value) {
-      const sku = String(item ?? '').trim();
-      if (sku && !out.includes(sku)) out.push(sku);
-    }
-    return out;
-  }
-  if (typeof value === 'string') {
-    const text = value.trim();
-    if (!text) return [];
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) return parseSkuList(parsed);
-      if (typeof parsed === 'string') return parseSkuList([parsed]);
-    } catch {
-      // 历史单值（如 "Duo"）直接当作一条 SKU
-      return [text];
-    }
-  }
-  return [];
-}
-
-// 行记录的完整 SKU 列表：优先 skus，历史数据回退为 [plan]
-function skuListOf(record) {
-  const list = parseSkuList(record?.skus);
-  return list.length ? list : parseSkuList(record?.plan);
-}
-
-// 接口输出：skus 一律是数组
-function withSkus(row) {
-  if (!row) return row;
-  return { ...row, skus: skuListOf(row) };
-}
-
-// 只对带 SKU 的角色行（在约 / 跟进）做输出转换
-function withRoleSkus(table, row) {
-  return table === 'contracts' || table === 'prospects' ? withSkus(row) : row;
-}
-
-// 落库文本（JSON 数组），供续约同步 / 补建在约时复制 SKU 列表
-function skuTextOf(record) {
-  return JSON.stringify(skuListOf(record));
-}
-
-// 与前端 src/utils/date.js 的 oneYearBefore 一致：到期时间 − 1 年 + 1 天（订阅默认一年）
-function oneYearBefore(dateStr) {
-  const [y, m, d] = String(dateStr).split('-').map(Number);
-  return dateKey(new Date(y - 1, m - 1, d + 1));
-}
-
-// 判定「该客户是否在约」：按 contractId → customerId → 客户名（规范化）依次匹配在约记录
-function findContractFor({ contractId, customerId, name } = {}) {
-  if (contractId) {
-    const byId = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contractId);
-    if (byId) return byId;
-  }
-  if (customerId) {
-    const byCustomer = db
-      .prepare(`SELECT * FROM contracts WHERE customerId = ? ORDER BY expiryDate DESC LIMIT 1`)
-      .get(customerId);
-    if (byCustomer) return byCustomer;
-  }
-  const clean = normalizeCustomerName(name);
-  if (!clean) return null;
-  return db.prepare(`SELECT * FROM contracts WHERE name = ? ORDER BY expiryDate DESC LIMIT 1`).get(clean) || null;
-}
-
-// 在约记录是否已进入续约窗口：距到期 ≤ RENEW_WINDOW_DAYS 天（含已逾期）
-function isWithinRenewWindow(expiryDate) {
-  const d = daysUntil(expiryDate);
-  return d != null && d <= RENEW_WINDOW_DAYS;
-}
-
-// 建立 / 更新某在约客户对应的「续约跟进」角色。
-// 与在约客户共用同一份客户主档：名称、联系人、SKU、金额、到期时间都以在约记录为准。
-function upsertRenewRole(contract, customerId, extra = {}) {
-  const cust = customerById(customerId) || { name: contract.name, contact: contract.contact || '' };
-  const data = {
-    name: cust.name,
-    contact: cust.contact || '',
-    expectedAmount: contract.contractAmount,
-    plan: contract.plan || '',
-    skus: skuTextOf(contract),
-    expiryDate: contract.expiryDate,
+  const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
+  return {
+    name,
+    customerId,
+    partnerId: partnerId || null,
+    category,
+    status,
+    contact: trim(input.contact ?? existing?.contact),
+    expectedAmount,
+    contractAmount: status === WON ? contractAmount : null,
+    startDate: status === WON ? startDate : null,
+    expiryDate,
+    skus,
+    lastFollowUp: trim(input.lastFollowUp ?? existing?.lastFollowUp) || null,
+    nextFollowUp:
+      status === WATCHING ? null : trim(input.nextFollowUp ?? existing?.nextFollowUp) || null,
   };
-  const existing = db
-    .prepare(
-      `SELECT * FROM prospects WHERE category = 'renew' AND (contractId = ? OR customerId = ?) ORDER BY createdAt ASC LIMIT 1`
-    )
-    .get(contract.id, customerId);
-  if (existing) {
-    db.prepare(
-      `UPDATE prospects SET name = @name, contact = @contact, expectedAmount = @expectedAmount, plan = @plan, skus = @skus, expiryDate = @expiryDate, contractId = @contractId, customerId = @customerId, status = 'active', lostAt = NULL WHERE id = @id`
-    ).run({ ...data, contractId: contract.id, customerId, id: existing.id });
-    return existing.id;
-  }
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  db.prepare(
-    `INSERT INTO prospects (id, name, stage, contact, expectedAmount, lastFollowUp, nextFollowUp, category, contractId, expiryDate, plan, skus, customerId) VALUES (?, ?, 'negotiation', ?, ?, ?, ?, 'renew', ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    data.name,
-    data.contact,
-    data.expectedAmount,
-    extra.lastFollowUp ?? '',
-    extra.nextFollowUp ?? null,
-    contract.id,
-    data.expiryDate,
-    data.plan,
-    data.skus,
-    customerId
-  );
-  return id;
 }
 
-// 自动补建在约记录（用于「不在约」的续约跟进客户）：
-// SKU 列表取该续约角色的 SKU（缺省则第一个）、金额取预计金额、开始时间 = 到期时间前一年。
-// 补建后客户即出现在「在约客户」板块，备注时间线仍挂在共享的客户主档上。
-function createContractFromRenew(renew) {
-  if (!renew.expiryDate) return null;
-  const identity = attachCustomerIdentity('contracts', {
-    customerId: renew.customerId,
-    name: renew.name,
-    contact: renew.contact,
+function insertProject(input, forced = {}) {
+  const row = validateProjectPayload({ ...input, ...forced });
+  const id = trim(input.id) || uid();
+  if (db.prepare(`SELECT 1 FROM projects WHERE id = ?`).get(id)) throw httpError(409, '项目 id 已存在');
+  db.prepare(`
+    INSERT INTO projects (
+      id, name, customerId, partnerId, category, status, contact,
+      expectedAmount, contractAmount, skus, lastFollowUp, nextFollowUp,
+      startDate, expiryDate, sourceProjectId, lostAt, watchedAt, closedAt, createdAt
+    ) VALUES (
+      @id, @name, @customerId, @partnerId, @category, @status, @contact,
+      @expectedAmount, @contractAmount, @skus, @lastFollowUp, @nextFollowUp,
+      @startDate, @expiryDate, @sourceProjectId, NULL, NULL, NULL, @createdAt
+    )
+  `).run({
+    ...row,
+    id,
+    skus: JSON.stringify(row.skus),
+    sourceProjectId: trim(forced.sourceProjectId) || null,
+    createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
   });
-  const skus = skuListOf(renew);
-  const plan = skus[0] || DEFAULT_PLAN;
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  db.prepare(
-    `INSERT INTO contracts (id, name, plan, skus, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    identity.name,
-    plan,
-    JSON.stringify(skus.length ? skus : [plan]),
-    identity.contact,
-    Number(renew.expectedAmount) || 0,
-    oneYearBefore(renew.expiryDate),
-    renew.expiryDate,
-    identity.customerId
+  return projectById(id);
+}
+
+function customerProjectCounts(customerId) {
+  const counts = db
+    .prepare(`
+      SELECT
+        SUM(CASE WHEN status IN ('active', 'watching') THEN 1 ELSE 0 END) AS activeCount,
+        SUM(CASE WHEN status = 'won' THEN 1 ELSE 0 END) AS signedCount,
+        COUNT(*) AS totalCount
+      FROM projects WHERE customerId = ?
+    `)
+    .get(customerId);
+  return {
+    activeProjectCount: Number(counts?.activeCount) || 0,
+    signedProjectCount: Number(counts?.signedCount) || 0,
+    totalProjectCount: Number(counts?.totalCount) || 0,
+  };
+}
+
+function updateFollowUpsForProject(projectId) {
+  const project = db.prepare(`SELECT id, status FROM projects WHERE id = ?`).get(projectId);
+  if (!project) return;
+  const last = db
+    .prepare(`SELECT createdAt FROM notes WHERE projectId = ? ORDER BY createdAt DESC LIMIT 1`)
+    .get(projectId);
+  if (!last) {
+    db.prepare(`UPDATE projects SET lastFollowUp = NULL, nextFollowUp = NULL WHERE id = ?`).run(projectId);
+    return;
+  }
+  const local = localDateOfDb(last.createdAt);
+  if (Number.isNaN(local.getTime())) return;
+  const lastFollowUp = dateKey(local);
+  const nextFollowUp = project.status === WATCHING ? null : addDays(lastFollowUp, 3);
+  db.prepare(`UPDATE projects SET lastFollowUp = ?, nextFollowUp = ? WHERE id = ?`).run(
+    lastFollowUp,
+    nextFollowUp,
+    projectId
   );
-  db.prepare(`UPDATE prospects SET customerId = ? WHERE id = ?`).run(identity.customerId, renew.id);
-  return db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
 }
 
-// 续约跟进同步：新建客户与历史数据共用同一套判断逻辑
-//  A) 在约 → 续约跟进：距到期 ≤ RENEW_WINDOW_DAYS 天（约两个月）或已逾期的在约客户自动生成 / 更新 Renew 跟进
-//  B) 续约跟进 → 在约：先判定每个续约客户「是否在约」——不在约（历史手动新建的）就按表单信息自动补建在约记录，
-//     使其出现在「在约客户」板块；随后只有距到期 ≤ RENEW_WINDOW_DAYS 天的留在续约跟进，
-//     距到期更久的从续约跟进退出（客户继续留在在约客户板块，共享备注时间线不受影响）。
 function syncRenewals() {
-  const summary = { createdContracts: 0, exitedRenew: 0 };
+  const candidates = db
+    .prepare(`
+      SELECT p.*
+      FROM projects p
+      WHERE p.status = 'won'
+        AND p.expiryDate IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM projects newer
+          WHERE newer.customerId = p.customerId
+            AND newer.status = 'won'
+            AND newer.expiryDate IS NOT NULL
+            AND (
+              newer.expiryDate > p.expiryDate
+              OR (newer.expiryDate = p.expiryDate AND newer.createdAt > p.createdAt)
+            )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM projects renewal
+          WHERE renewal.sourceProjectId = p.id
+        )
+      ORDER BY p.expiryDate ASC
+    `)
+    .all();
 
-  // A) 在约 → 续约跟进（已标记 lost 的在约客户不再参与同步，留在「Lost 客户」页）
-  for (const c of db.prepare(`SELECT * FROM contracts WHERE ${NOT_LOST}`).all()) {
-    if (!isWithinRenewWindow(c.expiryDate)) continue;
-    // 复用在约客户的客户主档：续约跟进与在约客户共享同一份名称 / 联系人 / 备注
-    let cid = c.customerId;
-    if (!cid || !customerById(cid)) {
-      const identity = attachCustomerIdentity('prospects', { name: c.name, contact: c.contact });
-      cid = identity.customerId;
-      db.prepare(`UPDATE contracts SET customerId = ?, name = ?, contact = ? WHERE id = ?`).run(cid, c.name, c.contact || '', c.id);
+  let created = 0;
+  const tx = db.transaction(() => {
+    for (const project of candidates) {
+      if (!isWithinRenewWindow(project.expiryDate)) continue;
+      const customer = customerById(project.customerId);
+      if (!customer) continue;
+      insertProject(
+        {
+          name: `${project.name} · 续约`,
+          customerId: project.customerId,
+          partnerId: project.partnerId,
+          category: 'renew',
+          status: ACTIVE,
+          contact: project.contact,
+          expectedAmount: project.contractAmount || project.expectedAmount || 0,
+          skus: parseSkus(project.skus),
+          lastFollowUp: '',
+          nextFollowUp: '',
+        },
+        { sourceProjectId: project.id, expiryDate: project.expiryDate }
+      );
+      created += 1;
     }
-    upsertRenewRole(c, cid);
-  }
-
-  // B) 续约跟进 → 在约判定 + 续约窗口收口（已标记 lost 的续约跟进同样不再参与同步）
-  for (const r of db.prepare(`SELECT * FROM prospects WHERE category = 'renew' AND ${NOT_LOST}`).all()) {
-    const before = findContractFor(r);
-    const contract = before || createContractFromRenew(r);
-    if (!contract) {
-      // 既不在约、又没有续约到期时间 → 无法判定，保持原样（表单必填到期时间，正常不会出现）
-      console.warn(`⚠️ 续约跟进客户「${r.name}」缺少续约到期时间，已跳过在约判定`);
-      continue;
-    }
-    if (!before) summary.createdContracts += 1;
-    if (!isWithinRenewWindow(contract.expiryDate)) {
-      // 距到期还有两个多月 → 只在「在约客户」板块，退出续约跟进（备注挂在共享主档，不会丢）
-      db.prepare(`DELETE FROM prospects WHERE id = ?`).run(r.id);
-      summary.exitedRenew += 1;
-      continue;
-    }
-    upsertRenewRole(contract, contract.customerId || r.customerId, {
-      lastFollowUp: r.lastFollowUp,
-      nextFollowUp: r.nextFollowUp,
-    });
-  }
-
-  // 同一家客户在续约跟进里最多一条（历史重复行的收口，保留最早的那条；lost 行已归档，不参与）
-  const seen = new Set();
-  for (const row of db
-    .prepare(
-      `SELECT id, contractId FROM prospects WHERE category = 'renew' AND contractId != '' AND ${NOT_LOST} ORDER BY createdAt ASC, id ASC`
-    )
-    .all()) {
-    if (!seen.has(row.contractId)) {
-      seen.add(row.contractId);
-      continue;
-    }
-    db.prepare(`DELETE FROM prospects WHERE id = ?`).run(row.id);
-    summary.exitedRenew += 1;
-  }
-
-  return summary;
+  });
+  tx();
+  return { created, renewWindowDays: RENEW_WINDOW_DAYS };
 }
 
-// 健康检查：GET /api/health（需放在泛型 :table 路由之前）
+function isWithinRenewWindow(expiryDate) {
+  const days = daysUntil(expiryDate);
+  return days != null && days <= RENEW_WINDOW_DAYS;
+}
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+});
+
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
-// ---- 材料库：文件上传 / 列表 / 下载 / 删除（须在泛型 :table 路由之前注册） ----
-
-// 列表：GET /api/materials
+// ---- 材料库 ----
 app.get('/api/materials', (req, res, next) => {
   try {
     const rows = db
@@ -536,17 +347,12 @@ app.get('/api/materials', (req, res, next) => {
   }
 });
 
-// 上传：POST /api/materials（multipart/form-data，字段：file、note）
 app.post('/api/materials', upload.single('file'), (req, res, next) => {
   try {
-    if (!req.file) {
-      const err = new Error('未接收到文件，请选择要上传的文件');
-      err.status = 400;
-      throw err;
-    }
+    if (!req.file) throw httpError(400, '未接收到文件，请选择要上传的文件');
     const originalName = toUtf8(req.file.originalname);
     const ext = path.extname(originalName).toLowerCase();
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const id = uid();
     const note = toUtf8(String(req.body.note || '')).trim();
     db.prepare(
       `INSERT INTO materials (id, name, storedName, mime, size, ext, note) VALUES (@id, @name, @storedName, @mime, @size, @ext, @note)`
@@ -562,13 +368,11 @@ app.post('/api/materials', upload.single('file'), (req, res, next) => {
     const saved = db.prepare(`SELECT * FROM materials WHERE id = ?`).get(id);
     res.status(201).json({ ...saved, url: `/uploads/${encodeURIComponent(saved.storedName)}` });
   } catch (err) {
-    // 清理已落盘但入库失败的文件
     if (req.file) fs.unlink(req.file.path, () => {});
     next(err);
   }
 });
 
-// 下载：GET /api/materials/:id/download（以原始文件名下载）
 app.get('/api/materials/:id/download', (req, res, next) => {
   try {
     const m = db.prepare(`SELECT * FROM materials WHERE id = ?`).get(req.params.id);
@@ -581,7 +385,6 @@ app.get('/api/materials/:id/download', (req, res, next) => {
   }
 });
 
-// 删除：DELETE /api/materials/:id（同时删除磁盘文件）
 app.delete('/api/materials/:id', (req, res, next) => {
   try {
     const m = db.prepare(`SELECT * FROM materials WHERE id = ?`).get(req.params.id);
@@ -594,13 +397,7 @@ app.delete('/api/materials/:id', (req, res, next) => {
   }
 });
 
-// ---- 客户备注（时间线）路由 ----
-// customer：客户主档（跟进 / 在约 共用同一条时间线）；partner：合作伙伴独立档案
-const NOTE_TYPES = ['contract', 'prospect', 'partner', 'customer'];
-
-// 归档超过 1 个月的旧备注（见 archiveOldNotes）
-// 备注自动归档：超过 1 个月的备注不再直接删除，而是先追加写入 archive/notes-archive.jsonl，再从 notes 表移除。
-// 目的：让 VM 上的 smb.db 体积保持可控，同时不丢失历史沟通记录（续约周期是一年，历史备注是续约谈判的素材）。
+// ---- 备注归档 ----
 const ARCHIVE_DIR = path.join(__dirname, 'data', 'archive');
 const ARCHIVE_FILE = path.join(ARCHIVE_DIR, 'notes-archive.jsonl');
 
@@ -608,640 +405,609 @@ function archiveOldNotes() {
   try {
     const rows = db.prepare(`SELECT * FROM notes WHERE createdAt < datetime('now', '-1 month')`).all();
     if (!rows.length) return 0;
-
-    // 先落盘，再删库：宁可归档文件里出现重复行（下面按 id 去重即可），也不能丢数据
     fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
-    const payload = rows.map((r) => JSON.stringify({ ...r, archivedAt: new Date().toISOString() })).join('\n') + '\n';
+    const payload =
+      rows.map((r) => JSON.stringify({ ...r, archivedAt: new Date().toISOString() })).join('\n') + '\n';
     fs.appendFileSync(ARCHIVE_FILE, payload, 'utf8');
-
-    const del = db.prepare(`DELETE FROM notes WHERE createdAt < datetime('now', '-1 month')`).run();
-    // 回收空间：SQLite 删行只把页放回空闲列表、文件不会自动缩小，VACUUM 才会。库很小，耗时毫秒级。
+    const deleted = db.prepare(`DELETE FROM notes WHERE createdAt < datetime('now', '-1 month')`).run().changes;
     db.exec('VACUUM');
-    console.log(`🧹 已归档 ${del.changes} 条超过 1 个月的备注 → ${ARCHIVE_FILE}`);
-    return del.changes;
+    console.log(`🧹 已归档 ${deleted} 条超过 1 个月的备注`);
+    return deleted;
   } catch (err) {
     console.error('归档旧备注失败：', err.message);
     return 0;
   }
 }
 
-// 列表：GET /api/notes?customerType=&customerId=
+// ---- 客户备注 ----
+// 客户级：projectId 为空；项目级：projectId 有值。合作伙伴仍走 partner。
 app.get('/api/notes', (req, res, next) => {
-  const { customerType, customerId } = req.query;
-  if (!NOTE_TYPES.includes(customerType)) {
-    return res.status(400).json({ error: 'customerType 必须为 contract、prospect、partner 或 customer' });
-  }
-  if (!customerId) return res.status(400).json({ error: '缺少 customerId' });
-  archiveOldNotes();
   try {
-    const rows = db
-      .prepare(`SELECT * FROM notes WHERE customerType = ? AND customerId = ? ORDER BY createdAt DESC`)
-      .all(customerType, customerId);
+    const customerType = trim(req.query.customerType);
+    const customerId = trim(req.query.customerId);
+    const projectId = trim(req.query.projectId);
+    if (!['customer', 'partner'].includes(customerType)) {
+      throw httpError(400, 'customerType 必须为 customer 或 partner');
+    }
+    if (!customerId) throw httpError(400, '缺少 customerId');
+    archiveOldNotes();
+    let rows;
+    if (customerType === 'partner') {
+      rows = db
+        .prepare(`SELECT n.*, NULL AS projectName FROM notes n WHERE n.customerType = 'partner' AND n.customerId = ? ORDER BY n.createdAt DESC`)
+        .all(customerId);
+    } else if (projectId) {
+      const project = projectById(projectId);
+      if (!project) throw httpError(404, '项目不存在');
+      if (project.customerId !== customerId) throw httpError(400, '项目不属于该客户');
+      rows = db
+        .prepare(`
+          SELECT n.*, p.name AS projectName
+          FROM notes n LEFT JOIN projects p ON p.id = n.projectId
+          WHERE n.customerType = 'customer' AND n.customerId = ? AND n.projectId = ?
+          ORDER BY n.createdAt DESC
+        `)
+        .all(customerId, projectId);
+    } else {
+      rows = db
+        .prepare(`
+          SELECT n.*, p.name AS projectName
+          FROM notes n LEFT JOIN projects p ON p.id = n.projectId
+          WHERE n.customerType = 'customer' AND n.customerId = ?
+          ORDER BY n.createdAt DESC
+        `)
+        .all(customerId);
+    }
     res.json(rows);
   } catch (err) {
     next(err);
   }
 });
 
-// 新增：POST /api/notes（每条备注独立成行，不再按天合并；时间取自 createdAt）
 app.post('/api/notes', (req, res, next) => {
   try {
-    const { id, customerType, customerId, content } = req.body || {};
-    if (!id) {
-      const e = new Error('缺少 id');
-      e.status = 400;
-      throw e;
-    }
-    if (!NOTE_TYPES.includes(customerType)) {
-      const e = new Error('customerType 必须为 contract、prospect、partner 或 customer');
-      e.status = 400;
-      throw e;
-    }
-    if (!customerId) {
-      const e = new Error('缺少 customerId');
-      e.status = 400;
-      throw e;
-    }
-    if (!content || !String(content).trim()) {
-      const e = new Error('备注内容不能为空');
-      e.status = 400;
-      throw e;
-    }
-    const text = String(content).trim();
-    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
-      id,
-      customerType,
-      customerId,
-      text
-    );
-    const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(id);
-
-    // 客户主档备注：用最后一次添加备注的日期作为该客户下所有跟进角色的上次跟进，下次跟进自动设为3天后
+    const { id, customerType, customerId, projectId, content } = req.body || {};
+    if (!trim(id)) throw httpError(400, '缺少 id');
+    if (!['customer', 'partner'].includes(customerType)) throw httpError(400, '备注类型无效');
+    if (!trim(customerId)) throw httpError(400, '缺少 customerId');
+    if (!trim(content)) throw httpError(400, '备注内容不能为空');
+    let linkedProject = null;
     if (customerType === 'customer') {
-      updateFollowUpsForCustomer(customerId);
+      ensureCustomerExists(customerId);
+      if (trim(projectId)) {
+        linkedProject = projectById(trim(projectId));
+        if (!linkedProject) throw httpError(404, '项目不存在');
+        if (linkedProject.customerId !== customerId) throw httpError(400, '项目不属于该客户');
+      }
     }
+    db.prepare(`INSERT INTO notes (id, customerType, customerId, projectId, content) VALUES (?, ?, ?, ?, ?)`).run(
+      trim(id),
+      customerType,
+      trim(customerId),
+      linkedProject?.id || null,
+      trim(content)
+    );
+    if (linkedProject) updateFollowUpsForProject(linkedProject.id);
+    const saved = db
+      .prepare(`SELECT n.*, p.name AS projectName FROM notes n LEFT JOIN projects p ON p.id = n.projectId WHERE n.id = ?`)
+      .get(trim(id));
     res.status(201).json(saved);
   } catch (err) {
     next(err);
   }
 });
 
-// 编辑：PUT /api/notes/:id（仅更新内容，保留原时间）
 app.put('/api/notes/:id', (req, res, next) => {
   try {
-    const { content } = req.body || {};
-    if (!content || !String(content).trim()) {
-      const e = new Error('备注内容不能为空');
-      e.status = 400;
-      throw e;
-    }
-    const text = String(content).trim();
-    const result = db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(text, req.params.id);
-    if (!result.changes) return res.status(404).json({ error: '备注不存在' });
+    const content = trim(req.body?.content);
+    if (!content) throw httpError(400, '备注内容不能为空');
+    const result = db.prepare(`UPDATE notes SET content = ? WHERE id = ?`).run(content, req.params.id);
+    if (!result.changes) throw httpError(404, '备注不存在');
     const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(req.params.id);
-    // 客户主档备注：更新备注后同步重算该客户下所有跟进角色的上次/下次跟进日期
-    if (saved.customerType === 'customer') {
-      updateFollowUpsForCustomer(saved.customerId);
-    }
+    if (saved.projectId) updateFollowUpsForProject(saved.projectId);
     res.json(saved);
   } catch (err) {
     next(err);
   }
 });
 
-// 删除：DELETE /api/notes/:id
 app.delete('/api/notes/:id', (req, res, next) => {
   try {
-    const result = db.prepare(`DELETE FROM notes WHERE id = ?`).run(req.params.id);
-    if (!result.changes) return res.status(404).json({ error: '备注不存在' });
+    const saved = db.prepare(`SELECT * FROM notes WHERE id = ?`).get(req.params.id);
+    if (!saved) throw httpError(404, '备注不存在');
+    db.prepare(`DELETE FROM notes WHERE id = ?`).run(req.params.id);
+    if (saved.projectId) updateFollowUpsForProject(saved.projectId);
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-// ---- 续约跟进同步：在约 → 续约跟进（距到期 ≤ RENEW_WINDOW_DAYS 天）＋ 续约跟进客户的在约判定与窗口收口 ----
-app.post('/api/sync/renewals', (req, res, next) => {
-  try {
-    const summary = syncRenewals();
-    reindexProspectFollowUps();
-    res.json({ ok: true, renewWindowDays: RENEW_WINDOW_DAYS, ...summary });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ---- 标记 lost / 恢复（在约客户、客户跟进、续约跟进共用） ----
-// lost 只是角色行上的状态位：客户主档（customers）、备注时间线与全部业务字段保持原样，
-// 记录只是从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（new-lost / renew-lost）。
-function localToday() {
-  return dateKey(new Date());
-}
-
-function markRoleLost(table, id) {
-  const row = findRow(table, id);
-  if (!row) return null;
-  const stamp = localToday();
-  // 长期观察与流失互斥：标记 lost 时清掉 watchedAt（contracts 没有这个字段）
-  const clearWatch = table === 'prospects' ? `, watchedAt = NULL` : '';
-  db.transaction(() => {
-    db.prepare(`UPDATE ${table} SET status = ?, lostAt = ?${clearWatch} WHERE id = ?`).run(LOST, stamp, id);
-    // 在约客户流失 → 它的续约跟进一并归档：Renew Lost 统一按在约记录列出，同一客户不会出现两次
-    if (table === 'contracts') {
-      db.prepare(
-        `UPDATE prospects SET status = ?, lostAt = ?, watchedAt = NULL WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
-      ).run(LOST, stamp, id, row.customerId || '');
-    }
-    // 反向兜底：续约跟进本身流失时，把关联的在约记录一起归档，避免「归档了却在 Lost 页看不到」
-    if (table === 'prospects' && row.category === 'renew') {
-      const contract =
-        (row.contractId && findRow('contracts', row.contractId)) ||
-        (row.customerId &&
-          db.prepare(`SELECT * FROM contracts WHERE customerId = ? ORDER BY expiryDate DESC LIMIT 1`).get(row.customerId));
-      if (contract) {
-        db.prepare(`UPDATE contracts SET status = ?, lostAt = ? WHERE id = ?`).run(LOST, stamp, contract.id);
-      }
-    }
-  })();
-  return findRow(table, id);
-}
-
-// 转为长期观察（仅跟进类 New 客户）：
-// 不新建任何记录 —— 只是把这条跟进记录的状态位置为 watching 并记下 watchedAt，
-// 客户主档（customers）、SKU、金额与备注时间线保持原样，因此「一个客户只有一张表」的原则不变。
-// 同时清空 nextFollowUp：长期观察客户不需要定时跟进，也不会进入「今日需跟进 / 逾期」统计。
-function markRoleWatching(id) {
-  const row = findRow('prospects', id);
-  if (!row) return null;
-  if (row.category === 'renew') {
-    throw conflict('续约跟进客户关联着在约合同，不能转为长期观察');
-  }
-  if (isLost(row)) {
-    throw conflict('该客户已标记为 Lost，请先在「Lost 客户」页恢复后再转为长期观察');
-  }
-  db.prepare(`UPDATE prospects SET status = ?, watchedAt = ?, nextFollowUp = NULL WHERE id = ?`).run(
-    WATCHING,
-    localToday(),
-    id
-  );
-  return findRow('prospects', id);
-}
-
-function restoreRole(table, id) {
-  const row = findRow(table, id);
-  if (!row) return null;
-  const cid = row.customerId || '';
-  // 从长期观察恢复：恢复后重新按备注时间线安排下次跟进
-  const wasWatching = table === 'prospects' && isWatching(row);
-  // 恢复前确认同一客户在本板块没有另一条进行中的记录，避免同一板块出现两次
-  if (cid) {
-    const other =
-      table === 'contracts'
-        ? db.prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND id != ? AND ${NOT_LOST}`).get(cid, id)
-        : db
-            .prepare(
-              `SELECT id, name FROM prospects WHERE customerId = ? AND id != ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}`
-            )
-            .get(cid, id, row.category === 'renew' ? 'renew' : 'new');
-    if (other) {
-      throw conflict(`客户「${other.name}」已有一条进行中的记录，请先处理该条再恢复这条归档记录`);
-    }
-  }
-  db.transaction(() => {
-    // watching 与 lost 互斥：恢复时两个时间戳都清空（contracts 没有 watchedAt）
-    if (table === 'prospects') {
-      db.prepare(`UPDATE prospects SET status = ?, lostAt = NULL, watchedAt = NULL WHERE id = ?`).run(ACTIVE, id);
-    } else {
-      db.prepare(`UPDATE ${table} SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, id);
-    }
-    if (table === 'contracts') {
-      db.prepare(
-        `UPDATE prospects SET status = ?, lostAt = NULL WHERE category = 'renew' AND (contractId = ? OR (customerId != '' AND customerId = ?))`
-      ).run(ACTIVE, id, cid);
-    }
-  })();
-  // 从长期观察恢复：重新按备注时间线安排下次跟进（备注挂在共享客户主档上，不会丢）
-  if (wasWatching && cid) updateFollowUpsForCustomer(cid);
-  // 恢复在约客户后重新收口续约跟进：临期的重新带出，窗口外的自动退出（与原规则一致）
-  if (table === 'contracts') syncRenewals();
-  return findRow(table, id);
-}
-
-const LOST_TABLES = ['contracts', 'prospects'];
-
-// 标记：POST /api/contracts/:id/lost、POST /api/prospects/:id/lost
-app.post('/api/:table/:id/lost', (req, res, next) => {
-  const table = req.params.table;
-  if (!LOST_TABLES.includes(table)) return res.status(404).json({ error: '未知资源' });
-  try {
-    const row = markRoleLost(table, req.params.id);
-    if (!row) return res.status(404).json({ error: '记录不存在' });
-    res.json(withRoleSkus(table, row));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 恢复：POST /api/contracts/:id/restore、POST /api/prospects/:id/restore
-app.post('/api/:table/:id/restore', (req, res, next) => {
-  const table = req.params.table;
-  if (!LOST_TABLES.includes(table)) return res.status(404).json({ error: '未知资源' });
-  try {
-    const row = restoreRole(table, req.params.id);
-    if (!row) return res.status(404).json({ error: '记录不存在' });
-    res.json(withRoleSkus(table, row));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 转为长期观察：POST /api/prospects/:id/watch
-// 与 lost 一样只是状态位（status='watching' + watchedAt），不复制客户主档、不新建记录；
-// 仅适用于跟进类 New 客户（续约跟进关联着在约合同，不能转长期观察）。
-app.post('/api/prospects/:id/watch', (req, res, next) => {
-  try {
-    const row = markRoleWatching(req.params.id);
-    if (!row) return res.status(404).json({ error: '记录不存在' });
-    res.json(withSkus(row));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ---- 新建 / 编辑续约客户：服务端统一执行「在约判定」（须注册在泛型 POST /api/:table 之前） ----
-// 1) 判定该客户是否在约（contractId → customerId → 客户名）：
-//    在约 → 表单里的 SKU / 金额 / 到期时间同步回在约记录（名称、联系人以客户主档为准）
-//    不在约 → 用表单信息自动补建一条在约记录，客户随即出现在「在约客户」板块
-// 2) 只有距到期 ≤ RENEW_WINDOW_DAYS 天（默认 60 天 ≈ 两个月）的才留在「续约跟进」，
-//    距到期更久的自动退出续约跟进（客户继续留在在约客户板块，共享备注时间线不受影响）
-app.post('/api/renewals', (req, res, next) => {
-  try {
-    const body = req.body || {};
-    const name = normalizeCustomerName(body.name);
-    if (!name) {
-      const e = new Error('缺少必填字段: name');
-      e.status = 400;
-      throw e;
-    }
-    const amount = Number(body.expectedAmount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      const e = new Error('预计金额必须是大于 0 的数字');
-      e.status = 400;
-      throw e;
-    }
-    if (!body.expiryDate) {
-      const e = new Error('缺少必填字段: expiryDate');
-      e.status = 400;
-      throw e;
-    }
-    // 编辑已有续约跟进角色时先取出原行：用于复用客户主档与沿用跟进日期
-    const existing = body.id ? db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(body.id) : null;
-    // 多 SKU：表单传完整列表（skus），历史接口只传 plan 时按单条处理
-    const requestedSkus = parseSkuList(body.skus !== undefined ? body.skus : body.plan);
-
-    // 1) 客户主档（客户名唯一 → 同名直接复用同一份名称 / 联系人 / 备注）
-    const identity = attachCustomerIdentity('prospects', {
-      customerId: existing?.customerId,
-      name,
-      contact: body.contact,
-    });
-
-    // 2) 在约判定
-    let contract = findContractFor({
-      contractId: existing?.contractId,
-      customerId: identity.customerId,
-      name: identity.name,
-    });
-    let createdContract = false;
-    const expiryDate = String(body.expiryDate);
-    // 保存续约 = 客户重新在约：此前标记 lost 的在约记录随之恢复（客户档案与备注原样保留）
-    if (contract && isLost(contract)) {
-      db.prepare(`UPDATE contracts SET status = ?, lostAt = NULL WHERE id = ?`).run(ACTIVE, contract.id);
-      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
-    }
-    if (contract) {
-      // 已是在约客户：把表单里的订阅信息（含 SKU 列表）同步回在约记录，两个板块保持一致
-      const currentSkus = skuListOf(contract);
-      const skus = requestedSkus.length
-        ? requestedSkus
-        : currentSkus.length
-          ? currentSkus
-          : parseSkuList(existing?.plan).length
-            ? parseSkuList(existing?.plan)
-            : [DEFAULT_PLAN];
-      const plan = skus[0] || DEFAULT_PLAN;
-      db.prepare(
-        `UPDATE contracts SET name = ?, contact = ?, plan = ?, skus = ?, contractAmount = ?, startDate = ?, expiryDate = ? WHERE id = ?`
-      ).run(
-        identity.name,
-        identity.contact,
-        plan,
-        JSON.stringify(skus),
-        amount,
-        expiryDate === contract.expiryDate ? contract.startDate : oneYearBefore(expiryDate),
-        expiryDate,
-        contract.id
-      );
-      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(contract.id);
-    } else {
-      // 尚未在约：自动补建在约记录（SKU 沿用表单列表、缺省第一个，金额取预计金额、开始时间 = 到期时间前一年）
-      const skus = requestedSkus.length
-        ? requestedSkus
-        : parseSkuList(existing?.plan).length
-          ? parseSkuList(existing?.plan)
-          : [DEFAULT_PLAN];
-      const plan = skus[0] || DEFAULT_PLAN;
-      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      db.prepare(
-        `INSERT INTO contracts (id, name, plan, skus, contact, contractAmount, startDate, expiryDate, customerId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        id,
-        identity.name,
-        plan,
-        JSON.stringify(skus),
-        identity.contact,
-        amount,
-        oneYearBefore(expiryDate),
-        expiryDate,
-        identity.customerId
-      );
-      contract = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
-      createdContract = true;
-    }
-
-    // 3) 续约窗口判定：距到期 ≤ RENEW_WINDOW_DAYS 天才留在「续约跟进」
-    const within = isWithinRenewWindow(contract.expiryDate);
-    const payload = {
-      ok: true,
-      customerId: identity.customerId,
-      contract: withSkus(contract),
-      createdContract,
-      removedFromRenew: false,
-      daysLeft: daysUntil(contract.expiryDate),
-      renewWindowDays: RENEW_WINDOW_DAYS,
-      renew: null,
-    };
-    if (!within) {
-      // 距到期还有两个多月：退出续约跟进，只在「在约客户」板块。
-      // 按 contractId / customerId 一并清理（不依赖前端是否回传了续约行 id），避免留下过期角色行。
-      const info = db
-        .prepare(`DELETE FROM prospects WHERE category = 'renew' AND (contractId = ? OR customerId = ?)`)
-        .run(contract.id, identity.customerId);
-      payload.removedFromRenew = info.changes > 0;
-      return res.status(createdContract ? 201 : 200).json(payload);
-    }
-    const renewId = upsertRenewRole(contract, identity.customerId, {
-      lastFollowUp: body.lastFollowUp ?? existing?.lastFollowUp ?? '',
-      nextFollowUp: body.nextFollowUp ?? existing?.nextFollowUp ?? null,
-    });
-    payload.renew = withSkus(db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(renewId));
-    // 201：本次请求新建了在约记录或续约跟进角色；200：仅在原有记录上更新
-    res.status(createdContract || !existing ? 201 : 200).json(payload);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ---- REST API ----
-
-// 客户主档客户列表（只读，供统一档案视图使用）：GET /api/customers
+// ---- 客户主档 ----
 app.get('/api/customers', (req, res, next) => {
   try {
-    res.json(db.prepare(`SELECT * FROM customers ORDER BY createdAt DESC`).all());
+    const customers = db.prepare(`SELECT * FROM customers ORDER BY createdAt DESC, name ASC`).all();
+    res.json(customers.map((c) => ({ ...c, ...customerProjectCounts(c.id) })));
   } catch (err) {
     next(err);
   }
 });
 
-// 列表：GET /api/:table
-app.get('/api/:table', (req, res, next) => {
-  const table = req.params.table;
-  if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
+app.post('/api/customers', (req, res, next) => {
   try {
-    const rows = db.prepare(`SELECT * FROM ${table} ORDER BY createdAt DESC`).all();
-    res.json(table === 'contracts' || table === 'prospects' ? rows.map(withSkus) : rows);
+    const name = normalizeCustomerName(req.body?.name);
+    if (!name) throw httpError(400, '请填写客户名称');
+    if (db.prepare(`SELECT 1 FROM customers WHERE name = ?`).get(name)) {
+      throw httpError(409, `客户「${name}」已存在`);
+    }
+    const id = trim(req.body?.id) || uid();
+    db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(
+      id,
+      name,
+      trim(req.body?.contact)
+    );
+    res.status(201).json(db.prepare(`SELECT * FROM customers WHERE id = ?`).get(id));
   } catch (err) {
     next(err);
   }
 });
 
-// 客户名唯一 → 一家客户在「在约 / 客户跟进 / 续约跟进」里各最多出现一次。
-// 同一客户跨板块重复（例如既在客户跟进又在约）会让同一家公司出现两条记录、备注时间线被拆开，因此写入前统一校验。
-// 长期观察（watching）的记录仍占用「客户跟进」这一个位置：需要继续跟进时请在长期观察页「恢复跟进」，
-// 而不是再新增一条记录（保证一个客户始终只有一张表）。
-// excludeId：更新角色行时排除自身。
-function assertCustomerRoleFree(table, row, excludeId) {
-  const cid = String(row.customerId || '');
-  if (!cid) return;
-  const skip = excludeId ? ` AND id != ?` : ``;
-  const skipArgs = excludeId ? [excludeId] : [];
-  // 只跟「进行中」的角色行比唯一性：已标记 lost 的记录已归档到「Lost 客户」页，
-  // 不挡客户重新进入跟进 / 在约流程（客户主档仍然只有一条，档案与备注继续复用）
-  if (table === 'contracts') {
-    const dup = db
-      .prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND ${NOT_LOST}${skip}`)
-      .get(cid, ...skipArgs);
-    if (dup) {
-      throw conflict(`该客户已有在约记录（${dup.name}），如需延长期限请在详情里使用「续约」`);
-    }
-    const following = db
-      .prepare(
-        `SELECT id, name, status FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = 'new' AND ${NOT_LOST}${skip}`
-      )
-      .get(cid, ...skipArgs);
-    if (following) {
-      throw conflict(
-        isWatching(following)
-          ? `客户「${following.name}」正在「长期观察」中，如需继续跟进请先在长期观察页「恢复跟进」`
-          : `客户「${following.name}」仍在客户跟进列表中，请在其详情里使用「转为在约」`
-      );
-    }
-  }
-  if (table === 'prospects') {
-    const category = row.category === 'renew' ? 'renew' : 'new';
-    const dup = db
-      .prepare(
-        `SELECT id, name, status FROM prospects WHERE customerId = ? AND COALESCE(NULLIF(category, ''), 'new') = ? AND ${NOT_LOST}${skip}`
-      )
-      .get(cid, category, ...skipArgs);
-    if (dup) {
-      throw conflict(
-        isWatching(dup)
-          ? `客户「${dup.name}」正在「长期观察」中，如需继续跟进请先在长期观察页「恢复跟进」`
-          : `客户「${dup.name}」已在「${category === 'renew' ? '续约跟进' : '客户跟进'}」列表中，请直接查看 / 编辑该条记录`
-      );
-    }
-    // 新签跟进不能挂在已是在约客户的公司上（续约由系统按到期时间自动带出 Renew）
-    if (category === 'new') {
-      const active = db
-        .prepare(`SELECT id, name FROM contracts WHERE customerId = ? AND ${NOT_LOST}${skip}`)
-        .get(cid, ...skipArgs);
-      if (active) {
-        throw conflict(
-          `客户「${active.name}」已是在约客户，系统已把它归入「在约客户」板块；距到期 ≤ ${RENEW_WINDOW_DAYS} 天时会自动带出续约跟进，无需重复新增跟进`
-        );
-      }
-    }
-  }
-}
-
-// 写入角色行（在约 / 跟进）前的统一准备：解析客户主档 + 校验同一客户在各板块的唯一性
-function prepareCustomerRole(table, body, excludeId) {
-  const row = sanitize(table, body);
-  if (table === 'contracts' || table === 'prospects') {
-    const identity = attachCustomerIdentity(table, body);
-    row.customerId = identity.customerId;
-    row.name = identity.name;
-    row.contact = identity.contact;
-    // 已标记 lost 的记录已归档到「Lost 客户」页，不参与板块唯一性校验
-    if (!isLost(row)) assertCustomerRoleFree(table, row, excludeId);
-  }
-  return row;
-}
-
-function insertRow(table, row) {
-  const keys = Object.keys(row);
-  const placeholders = keys.map((k) => `@${k}`).join(', ');
-  db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${placeholders})`).run(row);
-  return findRow(table, row.id);
-}
-
-// 新增：POST /api/:table
-app.post('/api/:table', (req, res, next) => {
-  const table = req.params.table;
-  if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
+app.put('/api/customers/:id', (req, res, next) => {
   try {
-    const body = req.body || {};
-    // 先做字段校验（缺必填字段直接 400），再解析客户主档，避免校验失败时留下一条空档
-    const row = prepareCustomerRole(table, body);
-    res.status(201).json(withRoleSkus(table, insertRow(table, row)));
+    const existing = customerById(req.params.id);
+    if (!existing) throw httpError(404, '客户不存在');
+    const name = normalizeCustomerName(req.body?.name ?? existing.name);
+    if (!name) throw httpError(400, '客户名称不能为空');
+    const clash = db.prepare(`SELECT id FROM customers WHERE name = ? AND id != ?`).get(name, existing.id);
+    if (clash) throw httpError(409, `客户「${name}」已存在`);
+    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(
+      name,
+      trim(req.body?.contact ?? existing.contact),
+      existing.id
+    );
+    res.json(db.prepare(`SELECT * FROM customers WHERE id = ?`).get(existing.id));
   } catch (err) {
     next(err);
   }
 });
 
-// 转为在约：POST /api/prospects/:id/convert（body 为 ContractForm 的字段）
-// 「移出跟进 + 建立在约」必须在同一个事务里完成：分两次请求时，若第二步失败会留下「合同已建、跟进还在」的中间态，
-// 同一家客户就会同时出现在两个板块。改名 / 同名复用等主档逻辑仍走 prepareCustomerRole（客户名唯一）。
-app.post('/api/prospects/:id/convert', (req, res, next) => {
+app.delete('/api/customers/:id', (req, res, next) => {
   try {
-    const p = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(req.params.id);
-    if (!p) return res.status(404).json({ error: '记录不存在' });
-    if (p.category === 'renew') {
-      throw conflict('续约跟进客户本身关联着在约合同，不能重复转为在约');
-    }
-    // 带上原客户主档 id：表单里改了名字也只会给这一份主档改名（备注时间线不丢），撞名则 409
-    const body = { ...(req.body || {}), customerId: p.customerId };
-    // 新合同用全新 id（沿用旧前端「转为在约」的约定），不复用跟进记录的 id
-    const rowId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const convert = db.transaction(() => {
-      // 先解除跟进角色（客户主档与共享备注保留，由同一主档承接在约角色），
-      // 再解析 / 校验主档：此时该跟进角色已被移除，不会把自己误判成「仍在客户跟进列表中」
-      db.prepare(`DELETE FROM prospects WHERE id = ?`).run(p.id);
-      const row = prepareCustomerRole('contracts', { ...body, id: rowId });
-      insertRow('contracts', row);
-    });
-    convert();
-    res.status(201).json(withSkus(findRow('contracts', rowId)));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 更新：PUT /api/:table/:id（支持部分字段更新，与现有记录合并后校验）
-app.put('/api/:table/:id', (req, res, next) => {
-  const table = req.params.table;
-  const id = req.params.id;
-  if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
-  try {
-    const existing = findRow(table, id);
-    if (!existing) return res.status(404).json({ error: '记录不存在' });
-    let body = { ...existing, ...req.body, id };
-    // 编辑在约 / 跟进客户的身份字段（名称/联系人）时，更新客户主档，并同步镜像到所有同 customerId 的角色行；
-    // 同时按「客户名唯一」重新校验板块归属（排除自身）
-    const row = prepareCustomerRole(table, body, id);
-    const sets = COLUMNS[table]
-      .filter((k) => k in row)
-      .map((k) => `${k} = @${k}`)
-      .join(', ');
-    db.prepare(`UPDATE ${table} SET ${sets} WHERE id = @id`).run(row);
-    res.json(withRoleSkus(table, findRow(table, id)));
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 删除在约客户：级联清理其关联的 Renew 跟进；仅当该客户主档不再有任何角色时，才连同主档与备注一并删除
-function deleteContractCascade(id) {
-  const c = db.prepare(`SELECT * FROM contracts WHERE id = ?`).get(id);
-  if (!c) return 0;
-  const cid = c.customerId;
-  db.prepare(`DELETE FROM prospects WHERE category = 'renew' AND contractId = ?`).run(id);
-  db.prepare(`DELETE FROM contracts WHERE id = ?`).run(id);
-  const remaining = cid
-    ? db.prepare(`SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`).get(cid, cid).c
-    : 0;
-  if (cid && remaining <= 0) {
-    db.prepare(`DELETE FROM notes WHERE customerType = 'customer' AND customerId = ?`).run(cid);
-    db.prepare(`DELETE FROM customers WHERE id = ?`).run(cid);
-  }
-  return 1;
-}
-
-// 删除跟进角色：保留共享的客户主档与备注（当客户主档还有其他角色，如已转在约），仅当无任何角色时才一并清理
-function deleteProspectCascade(id) {
-  const p = db.prepare(`SELECT * FROM prospects WHERE id = ?`).get(id);
-  if (!p) return 0;
-  const cid = p.customerId;
-  db.prepare(`DELETE FROM prospects WHERE id = ?`).run(id);
-  const remaining = cid
-    ? db.prepare(`SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`).get(cid, cid).c
-    : 0;
-  if (cid && remaining <= 0) {
-    db.prepare(`DELETE FROM notes WHERE customerType = 'customer' AND customerId = ?`).run(cid);
-    db.prepare(`DELETE FROM customers WHERE id = ?`).run(cid);
-  }
-  return 1;
-}
-
-// 删除：DELETE /api/:table/:id
-app.delete('/api/:table/:id', (req, res, next) => {
-  const table = req.params.table;
-  const id = req.params.id;
-  if (!NOT_FOUND(table)) return res.status(404).json({ error: '未知资源' });
-  try {
-    let changes = 0;
-    if (table === 'contracts') changes = deleteContractCascade(id);
-    else if (table === 'prospects') changes = deleteProspectCascade(id);
-    else if (table === 'partners') {
-      changes = db.prepare(`DELETE FROM partners WHERE id = ?`).run(id).changes;
-      if (changes) db.prepare(`DELETE FROM notes WHERE customerType = 'partner' AND customerId = ?`).run(id);
-    } else {
-      changes = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id).changes;
-    }
-    if (!changes) return res.status(404).json({ error: '记录不存在' });
+    const existing = customerById(req.params.id);
+    if (!existing) throw httpError(404, '客户不存在');
+    const count = Number(db.prepare(`SELECT COUNT(*) AS c FROM projects WHERE customerId = ?`).get(existing.id).c);
+    if (count > 0) throw httpError(409, `客户「${existing.name}」还有 ${count} 个项目，不能删除`);
+    db.transaction(() => {
+      db.prepare(`UPDATE deals SET customerId = NULL WHERE customerId = ?`).run(existing.id);
+      db.prepare(`DELETE FROM notes WHERE customerType = 'customer' AND customerId = ?`).run(existing.id);
+      db.prepare(`DELETE FROM customers WHERE id = ?`).run(existing.id);
+    })();
     res.json({ ok: true });
   } catch (err) {
     next(err);
   }
 });
 
-// 材料库文件静态托管：PDF / 图片 / HTML / SVG 支持在线预览。
-// 说明：HTML/SVG 内可嵌入脚本（XSS 风险），前端刻意用沙箱 iframe（sandbox="" 禁用脚本与同源）加载，
-// 后端此处放开内联渲染（不再强制 attachment），使 /uploads/ 下的 html/svg 能以 inline 方式拉到内容供沙箱预览。
-const INLINE_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.html', '.htm', '.svg']);
+// ---- 项目 ----
+app.get('/api/projects', (req, res, next) => {
+  try {
+    const filters = [];
+    const args = [];
+    if (trim(req.query.status)) {
+      filters.push('p.status = ?');
+      args.push(trim(req.query.status));
+    }
+    if (trim(req.query.category)) {
+      filters.push('p.category = ?');
+      args.push(trim(req.query.category));
+    }
+    if (trim(req.query.customerId)) {
+      filters.push('p.customerId = ?');
+      args.push(trim(req.query.customerId));
+    }
+    const where = filters.length ? ` WHERE ${filters.join(' AND ')}` : '';
+    const rows = db.prepare(`${PROJECT_SELECT}${where} ORDER BY p.createdAt DESC, p.name ASC`).all(...args);
+    res.json(rows.map(withSkus));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/projects/:id', (req, res, next) => {
+  try {
+    const project = projectById(req.params.id);
+    if (!project) throw httpError(404, '项目不存在');
+    res.json(withSkus(project));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/projects', (req, res, next) => {
+  try {
+    const project = insertProject(req.body || {}, { status: ACTIVE });
+    res.status(201).json(withSkus(project));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/projects/:id', (req, res, next) => {
+  try {
+    const existing = projectById(req.params.id);
+    if (!existing) throw httpError(404, '项目不存在');
+    const input = { ...existing, ...(req.body || {}), status: existing.status };
+    if (existing.status === WON && trim(input.customerId) !== existing.customerId) {
+      throw httpError(400, '已签项目不能更换最终客户');
+    }
+    const row = validateProjectPayload(input, existing);
+    db.prepare(`
+      UPDATE projects SET
+        name = @name,
+        customerId = @customerId,
+        partnerId = @partnerId,
+        category = @category,
+        contact = @contact,
+        expectedAmount = @expectedAmount,
+        contractAmount = @contractAmount,
+        skus = @skus,
+        lastFollowUp = @lastFollowUp,
+        nextFollowUp = @nextFollowUp,
+        startDate = @startDate,
+        expiryDate = @expiryDate
+      WHERE id = @id
+    `).run({
+      ...row,
+      id: existing.id,
+      skus: JSON.stringify(row.skus),
+    });
+    if (existing.status === WON) {
+      db.prepare(`UPDATE deals SET amount = ? WHERE projectId = ?`).run(
+        Number(row.contractAmount) || 0,
+        existing.id
+      );
+    }
+    res.json(withSkus(projectById(existing.id)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/projects/:id', (req, res, next) => {
+  try {
+    const existing = projectById(req.params.id);
+    if (!existing) throw httpError(404, '项目不存在');
+    const deals = Number(db.prepare(`SELECT COUNT(*) AS c FROM deals WHERE projectId = ?`).get(existing.id).c);
+    if (deals > 0) throw httpError(409, '该项目已有成交记录，不能删除');
+    db.transaction(() => {
+      db.prepare(`DELETE FROM notes WHERE projectId = ?`).run(existing.id);
+      db.prepare(`UPDATE projects SET sourceProjectId = NULL WHERE sourceProjectId = ?`).run(existing.id);
+      db.prepare(`DELETE FROM projects WHERE id = ?`).run(existing.id);
+    })();
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/projects/:id/win', (req, res, next) => {
+  try {
+    const existing = projectById(req.params.id);
+    if (!existing) throw httpError(404, '项目不存在');
+    if (existing.status === LOST) throw httpError(409, 'Lost 项目需先恢复后才能赢单');
+    if (existing.status === WATCHING) throw httpError(409, '长期观察项目需先恢复跟进后才能赢单');
+
+    const body = req.body || {};
+    const amount = num(body.contractAmount, 0);
+    const startDate = trim(body.startDate);
+    const expiryDate = trim(body.expiryDate);
+    if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
+    if (!startDate || !expiryDate) throw httpError(400, '请选择订阅开始和到期时间');
+    if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
+    const skus = body.skus !== undefined ? parseSkus(body.skus) : parseSkus(existing.skus);
+
+    const dealId = db.transaction(() => {
+      db.prepare(`
+        UPDATE projects SET
+          status = 'won',
+          contractAmount = ?,
+          startDate = ?,
+          expiryDate = ?,
+          skus = ?,
+          nextFollowUp = NULL,
+          lostAt = NULL,
+          watchedAt = NULL,
+          closedAt = NULL
+        WHERE id = ?
+      `).run(amount, startDate, expiryDate, JSON.stringify(skus), existing.id);
+
+      const oldDeal = db.prepare(`SELECT * FROM deals WHERE projectId = ?`).get(existing.id);
+      if (oldDeal) return oldDeal.id;
+      const id = uid();
+      db.prepare(`
+        INSERT INTO deals (id, customer, type, amount, date, projectId, customerId)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        id,
+        existing.customerName,
+        existing.category === 'renew' ? 'renewal' : 'new',
+        amount,
+        localToday(),
+        existing.id,
+        existing.customerId
+      );
+      return id;
+    })();
+    res.json({ project: withSkus(projectById(existing.id)), dealId, dealCreated: !!dealId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/projects/:id/renew', (req, res, next) => {
+  try {
+    const source = projectById(req.params.id);
+    if (!source) throw httpError(404, '项目不存在');
+    if (source.status !== WON) throw httpError(409, '只有已签项目才能新建续约');
+    const activeRenew = db
+      .prepare(`SELECT id FROM projects WHERE sourceProjectId = ? AND status IN ('active', 'watching') LIMIT 1`)
+      .get(source.id);
+    if (activeRenew) throw httpError(409, '这个已签项目已有进行中的续约项目');
+    const body = req.body || {};
+    const renewal = insertProject(
+      {
+        id: body.id || uid(),
+        name: trim(body.name) || `${source.name} · 续约`,
+        customerId: source.customerId,
+        partnerId: body.partnerId !== undefined ? body.partnerId : source.partnerId,
+        category: 'renew',
+        status: ACTIVE,
+        contact: body.contact ?? source.contact,
+        expectedAmount:
+          body.expectedAmount !== undefined
+            ? body.expectedAmount
+            : source.contractAmount || source.expectedAmount || 0,
+        skus: body.skus !== undefined ? body.skus : parseSkus(source.skus),
+        lastFollowUp: body.lastFollowUp || '',
+        nextFollowUp: body.nextFollowUp || '',
+        expiryDate: body.expiryDate || source.expiryDate,
+      },
+      { sourceProjectId: source.id }
+    );
+    res.status(201).json(withSkus(renewal));
+  } catch (err) {
+    next(err);
+  }
+});
+
+function changeProjectStatus(id, target) {
+  const existing = projectById(id);
+  if (!existing) throw httpError(404, '项目不存在');
+  if (existing.status === WON && target === LOST) throw httpError(409, '已签项目不能标记为 Lost');
+  const today = localToday();
+  if (target === LOST) {
+    db.prepare(`
+      UPDATE projects SET status = 'lost', lostAt = ?, watchedAt = NULL, closedAt = ?, nextFollowUp = NULL
+      WHERE id = ?
+    `).run(today, today, id);
+  } else if (target === WATCHING) {
+    if (existing.status !== ACTIVE) throw httpError(409, '只有进行中的项目才能转为长期观察');
+    db.prepare(`
+      UPDATE projects SET status = 'watching', watchedAt = ?, lostAt = NULL, closedAt = NULL, nextFollowUp = NULL
+      WHERE id = ?
+    `).run(today, id);
+  } else {
+    db.prepare(`
+      UPDATE projects SET status = 'active', lostAt = NULL, watchedAt = NULL, closedAt = NULL
+      WHERE id = ?
+    `).run(id);
+  }
+  return withSkus(projectById(id));
+}
+
+app.post('/api/projects/:id/lost', (req, res, next) => {
+  try {
+    res.json(changeProjectStatus(req.params.id, LOST));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/projects/:id/watch', (req, res, next) => {
+  try {
+    res.json(changeProjectStatus(req.params.id, WATCHING));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/projects/:id/restore', (req, res, next) => {
+  try {
+    const project = projectById(req.params.id);
+    if (!project) throw httpError(404, '项目不存在');
+    if (![LOST, WATCHING].includes(project.status)) throw httpError(409, '该项目不需要恢复');
+    res.json(changeProjectStatus(project.id, ACTIVE));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/sync/renewals', (req, res, next) => {
+  try {
+    res.json({ ok: true, ...syncRenewals() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- 成交 ----
+const DEAL_SELECT = `
+  SELECT d.*, p.name AS projectName, c.name AS customerName
+  FROM deals d
+  LEFT JOIN projects p ON p.id = d.projectId
+  LEFT JOIN customers c ON c.id = d.customerId
+`;
+
+app.get('/api/deals', (req, res, next) => {
+  try {
+    res.json(db.prepare(`${DEAL_SELECT} ORDER BY d.date DESC, d.createdAt DESC`).all());
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/deals', (req, res, next) => {
+  try {
+    const projectId = trim(req.body?.projectId);
+    if (!projectId) throw httpError(400, '请选择成交对应的已签项目');
+    const project = projectById(projectId);
+    if (!project) throw httpError(404, '项目不存在');
+    if (project.status !== WON) throw httpError(409, '只有已签项目才能记录成交');
+    if (db.prepare(`SELECT 1 FROM deals WHERE projectId = ?`).get(projectId)) {
+      throw httpError(409, '该项目已有一条成交记录');
+    }
+    const amount = num(req.body?.amount, project.contractAmount);
+    if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
+    const date = trim(req.body?.date) || localToday();
+    const id = trim(req.body?.id) || uid();
+    db.prepare(`
+      INSERT INTO deals (id, customer, type, amount, date, projectId, customerId)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      project.customerName,
+      project.category === 'renew' ? 'renewal' : 'new',
+      amount,
+      date,
+      project.id,
+      project.customerId
+    );
+    res.status(201).json(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/deals/:id', (req, res, next) => {
+  try {
+    const existing = db.prepare(`SELECT * FROM deals WHERE id = ?`).get(req.params.id);
+    if (!existing) throw httpError(404, '成交记录不存在');
+    const amount = num(req.body?.amount ?? existing.amount, 0);
+    if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
+    db.prepare(`UPDATE deals SET amount = ?, date = ? WHERE id = ?`).run(
+      amount,
+      trim(req.body?.date) || existing.date,
+      existing.id
+    );
+    res.json(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(existing.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/deals/:id', (req, res, next) => {
+  try {
+    const result = db.prepare(`DELETE FROM deals WHERE id = ?`).run(req.params.id);
+    if (!result.changes) throw httpError(404, '成交记录不存在');
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- 合作伙伴与工作记录 ----
+const SIMPLE_TABLES = {
+  partners: ['id', 'name', 'note'],
+  worklogs: ['id', 'content', 'date'],
+};
+
+app.get('/api/:table', (req, res, next) => {
+  const table = req.params.table;
+  if (!SIMPLE_TABLES[table]) return res.status(404).json({ error: '未知资源' });
+  try {
+    const rows = db.prepare(`SELECT * FROM ${table} ORDER BY createdAt DESC`).all();
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/:table', (req, res, next) => {
+  const table = req.params.table;
+  const columns = SIMPLE_TABLES[table];
+  if (!columns) return res.status(404).json({ error: '未知资源' });
+  try {
+    const body = req.body || {};
+    const id = trim(body.id) || uid();
+    if (!id) throw httpError(400, '缺少 id');
+    if (table === 'partners' && !trim(body.name)) throw httpError(400, '请填写合作伙伴名称');
+    if (table === 'worklogs' && (!trim(body.content) || !trim(body.date))) {
+      throw httpError(400, '工作记录内容和日期不能为空');
+    }
+    const row = { id };
+    for (const key of columns) {
+      if (key === 'id') continue;
+      row[key] = trim(body[key]);
+    }
+    const keys = Object.keys(row);
+    db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => `@${k}`).join(', ')})`).run(row);
+    res.status(201).json(db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put('/api/:table/:id', (req, res, next) => {
+  const table = req.params.table;
+  const columns = SIMPLE_TABLES[table];
+  if (!columns) return res.status(404).json({ error: '未知资源' });
+  try {
+    const existing = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id);
+    if (!existing) throw httpError(404, '记录不存在');
+    const body = req.body || {};
+    const row = { id: existing.id };
+    for (const key of columns) {
+      if (key === 'id') continue;
+      row[key] = body[key] !== undefined ? trim(body[key]) : existing[key] || '';
+    }
+    db.prepare(
+      `UPDATE ${table} SET ${columns.filter((c) => c !== 'id').map((c) => `${c} = @${c}`).join(', ')} WHERE id = @id`
+    ).run(row);
+    res.json(db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(existing.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/api/:table/:id', (req, res, next) => {
+  const table = req.params.table;
+  if (!SIMPLE_TABLES[table]) return res.status(404).json({ error: '未知资源' });
+  try {
+    const existing = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id);
+    if (!existing) throw httpError(404, '记录不存在');
+    db.transaction(() => {
+      if (table === 'partners') {
+        db.prepare(`UPDATE projects SET partnerId = NULL WHERE partnerId = ?`).run(existing.id);
+        db.prepare(`DELETE FROM notes WHERE customerType = 'partner' AND customerId = ?`).run(existing.id);
+      }
+      db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(existing.id);
+    })();
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.use(
   '/uploads',
   (req, res, next) => {
-    if (!INLINE_EXT.has(path.extname(req.path).toLowerCase())) {
-      res.setHeader('Content-Disposition', 'attachment');
-    }
+    const inlineExt = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.html', '.htm', '.svg']);
+    if (!inlineExt.has(path.extname(req.path).toLowerCase())) res.setHeader('Content-Disposition', 'attachment');
     next();
   },
   express.static(UPLOAD_DIR)
 );
 
-// 生产模式：若存在 dist 构建产物则一并托管前端
 if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
   app.use(express.static(DIST_DIR));
   app.use((req, res, next) => {
@@ -1250,35 +1016,34 @@ if (fs.existsSync(path.join(DIST_DIR, 'index.html'))) {
   });
 }
 
-// 统一错误处理
 app.use((err, req, res, next) => {
   const status = err.status || (err instanceof multer.MulterError ? 400 : 500);
   let message = err.message || '服务器错误';
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      message = `文件大小超出限制（最大 ${Math.round(MAX_UPLOAD_SIZE / 1024 / 1024)}MB）`;
-    } else {
-      message = '文件上传失败，请重试';
-    }
+    message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? `文件大小超出限制（最大 ${Math.round(MAX_UPLOAD_SIZE / 1024 / 1024)}MB）`
+        : '文件上传失败，请重试';
   }
   if (status >= 500) console.error(err);
   res.status(status).json({ error: message });
 });
 
-// 启动时归档一次超过 1 个月的旧备注
-archiveOldNotes();
-
-// 启动时对「续约跟进」里的所有客户执行一次在约判定（历史数据收口）：
-// 不在约的自动补建在约记录 → 落到「在约客户」板块；距到期超过 RENEW_WINDOW_DAYS 天的从续约跟进退出。
-const renewSummary = syncRenewals();
-if (renewSummary.createdContracts || renewSummary.exitedRenew) {
-  console.log(
-    `✅ 续约跟进已在约判定收口：自动补建在约记录 ${renewSummary.createdContracts} 家，退出续约跟进 ${renewSummary.exitedRenew} 家`
-  );
+export function startServer(port = PORT) {
+  archiveOldNotes();
+  try {
+    const summary = syncRenewals();
+    if (summary.created) console.log(`✅ 已自动创建 ${summary.created} 个续约项目`);
+  } catch (err) {
+    console.error('续约项目同步失败：', err.message);
+  }
+  return app.listen(port, () => {
+    console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${port}`);
+    console.log(`   数据库文件：${process.env.SMB_DB_FILE || path.join(__dirname, 'data', 'smb.db')}`);
+  });
 }
 
-app.listen(PORT, () => {
-  console.log(`✅ SMB 销售工作台 API 已启动：http://localhost:${PORT}`);
-  console.log(`   数据库文件：server/data/smb.db`);
-  console.log(`   服务器时区：${Intl.DateTimeFormat().resolvedOptions().timeZone} · ${new Date().toString()}`);
-});
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) startServer();
+
+export { app, syncRenewals, updateFollowUpsForProject };

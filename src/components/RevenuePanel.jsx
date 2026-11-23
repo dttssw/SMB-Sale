@@ -59,7 +59,7 @@ export default function RevenuePanel({ deals, onAdd }) {
       <div className="panel-head">
         <div>
           <h2>成交金额</h2>
-          <p className="panel-desc">回顾即可——New 客户转为在约时自动计入新签金额</p>
+          <p className="panel-desc">项目赢单时自动计入成交；每条成交都关联项目和最终客户</p>
         </div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={onAdd}>
           <Icon name="plus" />
@@ -112,7 +112,7 @@ export default function RevenuePanel({ deals, onAdd }) {
             <table className="table">
               <thead>
                 <tr>
-                  <th>客户</th>
+                  <th>项目 / 最终客户</th>
                   <th className="num">日期</th>
                   <th className="num">金额</th>
                 </tr>
@@ -121,9 +121,10 @@ export default function RevenuePanel({ deals, onAdd }) {
                 {paged.map((d) => (
                   <tr key={d.id}>
                     <td>
-                      <span className="cell-main" title={d.customer}>
-                        {d.customer}
+                      <span className="cell-main" title={d.projectName || d.customerName || d.customer}>
+                        {d.projectName || d.customerName || d.customer}
                       </span>
+                      <div className="cell-sub">{d.customerName || d.customer}</div>
                     </td>
                     <td className="num">{formatDate(d.date)}</td>
                     <td className="num strong">{formatMoney(d.amount)}</td>
@@ -133,7 +134,7 @@ export default function RevenuePanel({ deals, onAdd }) {
                   <tr>
                     <td colSpan={3} className="empty">
                       <div className="empty-state">
-                        <p>暂无成交记录，New 客户转为在约时自动计入，也可手动记录一笔</p>
+                        <p>暂无成交记录，项目赢单时自动计入，也可手动选择已签项目记录一笔</p>
                         <button type="button" className="btn btn-secondary" onClick={onAdd}>
                           <Icon name="plus" />
                           记录成交金额

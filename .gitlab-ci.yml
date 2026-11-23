@@ -37,6 +37,10 @@ deploy:
     - npm ci --no-audit --no-fund
     - mkdir -p /opt/smb-sale
     - rsync -a --delete --exclude 'server/data' --exclude 'server/uploads' ./ /opt/smb-sale/
+    # 重启前备份数据库（含 -wal / -shm）。表结构迁移在服务启动时自动执行，
+    # 没有备份就无法回滚；只保留最近 10 份。
+    - mkdir -p /opt/smb-sale-backups
+    - if [ -f /opt/smb-sale/server/data/smb.db ]; then d=/opt/smb-sale-backups/$(date +%Y%m%d-%H%M%S); mkdir -p "$d"; cp -a /opt/smb-sale/server/data/smb.db* "$d"/; ls -1dt /opt/smb-sale-backups/*/ | tail -n +11 | xargs -r rm -rf; fi
     - systemctl restart smb-sale
     - sleep 3
     - systemctl status smb-sale --no-pager -l || true

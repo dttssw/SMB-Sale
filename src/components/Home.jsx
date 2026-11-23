@@ -14,19 +14,18 @@ function greeting() {
 // 今日聚焦：根据数据给出一句既是鼓励又体谅疲惫的动态文案
 function focusLine(stats) {
   if (stats.followDue > 0)
-    return `今天有 ${stats.followDue} 家客户需要你跟进，先从最紧的开始，一件一件来。`;
+    return `今天有 ${stats.followDue} 个项目需要你跟进，先从最紧的开始，一件一件来。`;
   if (stats.expiring > 0)
-    return `有 ${stats.expiring} 家在约客户临近到期，安顿好他们，今天就很值得。`;
+    return `有 ${stats.expiring} 个已签项目临近到期，续约项目可以提前排起来。`;
   if (stats.todayWork > 0)
     return `已经记下 ${stats.todayWork} 条工作，稳步推进，这样的节奏就很好。`;
   return '今天从从容容，正好理一理手头的事，给接下来的冲刺留足空间。';
 }
 
 /**
- * 总览：固定顺序 问候 → KPI 四列 → 临期在约提醒。
- * 原来的 hero 装饰层（光球 / 渐变标题 / 两张卡片）已删除，首屏把版面全留给信息。
+ * 总览：问候 → KPI 四列 → 临期已签项目提醒。
  */
-export default function Home({ stats, contracts, today, onView, onRenew }) {
+export default function Home({ stats, projects, today, onView, onRenew }) {
   return (
     <section className="home">
       <div className="home-greet">
@@ -41,15 +40,15 @@ export default function Home({ stats, contracts, today, onView, onRenew }) {
         <KpiCard
           label="今日需跟进"
           value={stats.followDue}
-          unit="家"
+          unit="个"
           icon="target"
           tone={stats.followDue > 0 ? 'danger' : 'ok'}
           sub={`逾期 ${stats.overdueFollow} · 今日 ${stats.dueTodayFollow}`}
         />
         <KpiCard
-          label="临期在约"
+          label="临期已签"
           value={stats.expiring}
-          unit="家"
+          unit="个"
           icon="bell"
           tone={stats.expiring > 0 ? 'warn' : 'ok'}
           sub={`已到期 ${stats.overdueContracts} · 30天内 ${stats.exp30}`}
@@ -70,7 +69,7 @@ export default function Home({ stats, contracts, today, onView, onRenew }) {
         />
       </div>
 
-      <ExpiryAlert contracts={contracts} onView={onView} onRenew={onRenew} />
+      <ExpiryAlert projects={projects} onView={onView} onRenew={onRenew} />
     </section>
   );
 }

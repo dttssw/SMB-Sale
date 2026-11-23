@@ -6,7 +6,7 @@ import { useViewport } from '../hooks/useViewportFit.js';
 
 const FALLBACK_ROWS = 8; // 首次测量完成前的兜底行数
 
-export default function PartnerList({ partners, onAdd, onView }) {
+export default function PartnerList({ partners, projects = [], onAdd, onView }) {
   const viewport = useViewport();
   const sorted = [...partners].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
   // 与客户跟进 / 在约客户同一套逻辑：默认「舒适」布局；每页「自动」= 按当前窗口能完整显示的最多行数
@@ -65,6 +65,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
           <thead>
             <tr>
               <th>合作伙伴名称</th>
+              <th className="num">关联项目</th>
               <th className="ops">操作</th>
             </tr>
           </thead>
@@ -76,6 +77,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
                     {p.name}
                   </button>
                 </td>
+                <td className="num">{projects.filter((project) => project.partnerId === p.id).length}</td>
                 <td className="ops">
                   <span className="row-chevron">
                     <Icon name="chevronRight" />
@@ -85,7 +87,7 @@ export default function PartnerList({ partners, onAdd, onView }) {
             ))}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={2} className="empty">
+                <td colSpan={3} className="empty">
                   <div className="empty-state">
                     <p>暂无合作伙伴，可登记渠道商 / 代理商并随时补备注</p>
                     <button type="button" className="btn btn-secondary" onClick={onAdd}>

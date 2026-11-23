@@ -2,579 +2,342 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDbData } from './hooks/useDbData.js';
 import { useViewport } from './hooks/useViewportFit.js';
 import { api } from './api.js';
-import { daysUntil, formatCnDate, formatDate, monthOf, oneYearFrom, renewFrom, todayStr } from './utils/date.js';
+import { daysUntil, formatCnDate, monthOf, todayStr } from './utils/date.js';
 import { hashForSection, sectionFromHash } from './utils/route.js';
 import { sumBy } from './utils/format.js';
-import { SKUS, RENEW_WINDOW_DAYS } from './data/constants.js';
-import { skusOf } from './utils/sku.js';
+import { RENEW_WINDOW_DAYS } from './data/constants.js';
 import Header from './components/Header.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Home from './components/Home.jsx';
-import ExpiringContracts from './components/ExpiringContracts.jsx';
-import ProspectList from './components/ProspectList.jsx';
-import WatchList from './components/WatchList.jsx';
-import LostCustomers from './components/LostCustomers.jsx';
+import SignedProjects from './components/SignedProjects.jsx';
+import ProjectList from './components/ProjectList.jsx';
+import { WatchList, LostProjects } from './components/ProjectStatusList.jsx';
+import CustomerList from './components/CustomerList.jsx';
 import PartnerList from './components/PartnerList.jsx';
 import RevenuePanel from './components/RevenuePanel.jsx';
 import WorkJournal from './components/WorkJournal.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
 import Icon from './components/icons.jsx';
-import { ContractForm, ProspectForm, RenewForm, PartnerForm, DealForm } from './components/forms.jsx';
-import CustomerDetail from './components/CustomerDetail.jsx';
+import { ProjectForm, WinProjectForm, CustomerForm, PartnerForm, DealForm } from './components/forms.jsx';
+import { ProjectDetail, CustomerDetail, PartnerDetail } from './components/Details.jsx';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-const modalTitle = (m) => {
-  if (m.kind === 'detail') {
-    if (m.customerType === 'contract') return '在约客户详情';
-    if (m.customerType === 'partner') return '合作伙伴详情';
-    return '跟进客户详情';
-  }
-  if (m.kind === 'contract') return m.data ? '编辑在约客户' : '新增在约客户';
-  if (m.kind === 'convert') return '跟进客户转为在约客户';
-  if (m.kind === 'prospect') return m.data ? '编辑跟进客户' : '新增跟进客户';
-  if (m.kind === 'renew') return m.data ? '编辑续约跟进' : '新建续约客户';
-  if (m.kind === 'partner') return m.data ? '编辑合作伙伴' : '新建合作伙伴';
-  return '记录成交金额';
-};
-
-// 保存续约客户后的结果提示：说清系统把它放在了哪个板块、为什么这么放
-const daysText = (d) => (d == null ? '' : d < 0 ? `已逾期 ${-d} 天` : `距到期还有 ${d} 天`);
-const renewNotice = (r) => {
-  if (!r) return '';
-  const name = r.contract?.name || '';
-  if (r.renew) {
-    return r.createdContract
-      ? `客户「${name}」已自动建立在约记录并归入「在约客户」板块；${daysText(r.daysLeft)}，已进入续约窗口，同时显示在「续约跟进」`
-      : `已保存客户「${name}」：在约记录与续约跟进信息已同步（${daysText(r.daysLeft)}，仍在续约窗口内）`;
-  }
-  return r.createdContract
-    ? `客户「${name}」已自动建立在约记录并归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，续约跟进里暂不出现，临期时会自动带出`
-    : `客户「${name}」已归入「在约客户」板块；${daysText(r.daysLeft)}，超过 ${r.renewWindowDays} 天窗口，已退出「续约跟进」，临期时会自动带出`;
-};
-
-// 编辑续约客户时的表单初值：SKU 列表以在约记录为准
-// （历史续约行的 skus / plan 可能为空，若直接用表单默认的第一条 SKU 提交，会把在约记录里的 SKU 覆盖掉）
-const renewInitial = (row, contracts) => {
-  if (!row) return null;
-  const contract = contracts.find((c) => c.id === row.contractId);
-  const skus = skusOf(contract);
-  return skus.length ? { ...row, plan: skus[0], skus } : row;
-};
-
-// 客户跟进板块的展示尺寸：自动（按窗口宽度选）/ 双栏并排 / 单栏全宽（把跟进板块拉大，一屏看到更多客户）
-const FOLLOW_LAYOUTS = [
-  { key: 'auto', label: '自动', title: '按窗口宽度自动切换：宽屏双栏并排，窄屏单栏全宽' },
-  { key: 'split', label: '双栏', title: 'New / Renew 并排显示' },
-  { key: 'wide', label: '单栏全宽', title: '每个跟进板块占满整宽，客户看得更多' },
+const SECTIONS = [
+  { key: 'home', label: '总览', icon: 'home', desc: '今日聚焦与关键数字' },
+  { key: 'journal', label: '今日工作', icon: 'journal', desc: '每天做了什么，按天归档' },
+  { key: 'projects', label: '项目跟进', icon: 'target', desc: '按项目推进新签与续约，同客户可以并行多个项目' },
+  { key: 'signed', label: '已签项目', icon: 'clipboard', desc: '已赢单项目的成交与订阅信息，临期时可创建续约' },
+  { key: 'customers', label: '客户名单', icon: 'users', desc: '只维护客户主档，查看该客户的全部项目与备注' },
+  { key: 'watch', label: '长期观察', icon: 'eye', desc: '暂时不需要定时跟进、但需要长期留意的项目' },
+  { key: 'lost', label: 'Lost 项目', icon: 'alert', desc: '未赢单项目归档，客户与其他项目不受影响' },
+  { key: 'partners', label: '合作伙伴', icon: 'briefcase', desc: '渠道商 / 代理商主档与关联项目' },
+  { key: 'revenue', label: '成交金额', icon: 'coins', desc: '按项目查看新签与续约成交' },
+  { key: 'materials', label: '材料库', icon: 'folder', desc: '方案 / 报价 / 合同模板等资料' },
 ];
 
-// 自动布局的判定宽度：≥ 该宽度并排看两块（总量更大且页面不滚动），否则单栏全宽（每块更舒展）
-// 1280 及以上的窗口，双栏每块仍 ≥470px，表格不会横向溢出，一屏可见客户数也更多
+const NAV_KEYS = SECTIONS.map((section) => section.key);
+const HASH_ALIASES = { follow: 'projects', contracts: 'signed' };
+
+function readSection() {
+  const raw = window.location.hash.replace(/^#\/?/, '').split(/[?#]/)[0].replace(/\/+$/, '').trim();
+  const key = HASH_ALIASES[raw] || raw;
+  return sectionFromHash(key ? `#/${key}` : '', NAV_KEYS);
+}
+
+const modalTitle = (modal) => {
+  if (modal.kind === 'detailProject') return '项目详情';
+  if (modal.kind === 'detailCustomer') return '客户详情';
+  if (modal.kind === 'detailPartner') return '合作伙伴详情';
+  if (modal.kind === 'project') return modal.data?.id ? '编辑项目' : '新建项目';
+  if (modal.kind === 'customer') return modal.data?.id ? '编辑客户' : '新建客户';
+  if (modal.kind === 'partner') return modal.data?.id ? '编辑合作伙伴' : '新建合作伙伴';
+  if (modal.kind === 'win') return '项目赢单 / 签约';
+  if (modal.kind === 'renew') return '新建续约项目';
+  if (modal.kind === 'deal') return '记录成交金额';
+  return '';
+};
+
+const FOLLOW_LAYOUTS = [
+  { key: 'auto', label: '自动', title: '宽屏双栏，窄屏单栏' },
+  { key: 'split', label: '双栏', title: 'New / Renew 并排显示' },
+  { key: 'wide', label: '单栏全宽', title: '每个项目板块占满整宽' },
+];
+
 const AUTO_SPLIT_MIN_WIDTH = 1280;
 
-// 左侧导航板块（icon 为 icons.jsx 里的 16px 线性图标名）
-const SECTIONS = [
-  { key: 'home', label: '总览', icon: 'home', desc: '欢迎语与今日全局聚焦，一眼看清今天什么最要紧' },
-  { key: 'journal', label: '今日工作', icon: 'journal', desc: '记下每天做了什么，按天归档、方便复盘' },
-  { key: 'follow', label: '客户跟进', icon: 'target', desc: 'New / Renew 分流跟进，构成你的主体工作区' },
-  { key: 'contracts', label: '在约客户', icon: 'clipboard', desc: '在约订阅参考清单，临期客户优先处理' },
-  { key: 'revenue', label: '成交金额', icon: 'coins', desc: '本月 / 累计成交回顾，心里有底' },
-  { key: 'watch', label: '长期观察', icon: 'eye', desc: '不需要定时跟进、但需要长期留意的客户，可随时恢复跟进' },
-  { key: 'lost', label: 'Lost 客户', icon: 'alert', desc: '流失客户单独归档：New / Renew 分板块，客户档案与备注保持不变' },
-  { key: 'partners', label: '合作伙伴', icon: 'users', desc: '渠道商 / 代理商登记，可随时补备注' },
-  { key: 'materials', label: '材料库', icon: 'folder', desc: '方案 / 报价 / 合同模板等资料集中管理' },
-];
-
-// 合法板块 key：校验地址栏哈希用，未知值一律回落到总览（见 utils/route.js）
-const NAV_KEYS = SECTIONS.map((s) => s.key);
-
 export default function App() {
-  const contractsDb = useDbData('contracts');
-  const prospectsDb = useDbData('prospects');
-  const dealsDb = useDbData('deals');
+  const projectsDb = useDbData('projects');
+  const customersDb = useDbData('customers');
   const partnersDb = useDbData('partners');
+  const dealsDb = useDbData('deals');
   const materialsDb = useDbData('materials');
   const worklogsDb = useDbData('worklogs');
   const [modal, setModalState] = useState(null);
   const [actionError, setActionError] = useState('');
-  // 操作提示（如「续约客户已归入在约客户板块」）：与错误分开，成功态用绿色横幅展示
   const [actionNotice, setActionNotice] = useState('');
-  // 打开 / 关闭弹窗时先清掉上一次的操作提示，避免旧错误 / 旧提示串进新弹窗；
-  // 保存失败时弹窗保持打开，该提示会同时显示在页头横幅与弹窗顶部（见 Modal 的 error）
+  const [nav, setNav] = useState(readSection);
+  const [followLayout, setFollowLayout] = useState('auto');
+  const viewport = useViewport();
+  const syncRef = useRef(false);
+
   const setModal = (next) => {
     setActionError('');
     setActionNotice('');
     setModalState(next);
   };
-  // 当前板块取自地址栏哈希（刷新后仍停在同一板块，见下方 hashchange 监听）
-  const [nav, setNav] = useState(() => sectionFromHash(window.location.hash, NAV_KEYS));
-  const [followLayout, setFollowLayout] = useState('auto');
-  // 自动检测窗口尺寸：宽高都会实时影响板块大小（见 useViewportFit）
-  const viewport = useViewport();
 
-  // ---- 板块路由：左侧导航 ↔ 地址栏哈希（#/follow、#/contracts …）----
-  // 刷新 / 收藏 / 分享链接都会落到同一板块，浏览器前进后退也能在板块间切换
   useEffect(() => {
-    const onHashChange = () => setNav(sectionFromHash(window.location.hash, NAV_KEYS));
+    const onHashChange = () => setNav(readSection());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // 首次打开时把空地址补成当前板块，地址栏始终能读出「我在哪」
   useEffect(() => {
     if (!window.location.hash) window.history.replaceState(null, '', hashForSection(nav));
+    const raw = window.location.hash.replace(/^#\/?/, '').split(/[?#]/)[0];
+    if (HASH_ALIASES[raw]) window.history.replaceState(null, '', hashForSection(HASH_ALIASES[raw]));
   }, []);
 
-  // 切换板块：更新界面并写回哈希（浏览器后退可回到上一个板块）
   const selectNav = (key) => {
     if (key === nav) return;
     setNav(key);
     window.location.hash = hashForSection(key);
   };
 
-  const active = SECTIONS.find((s) => s.key === nav) || SECTIONS[0];
-  // 「自动」按窗口宽度决定并排还是单栏全宽：宽屏并排总量更大，窄屏单栏每块更舒展
+  const active = SECTIONS.find((section) => section.key === nav) || SECTIONS[0];
   const layoutMode =
     followLayout === 'auto' ? (viewport.width >= AUTO_SPLIT_MIN_WIDTH ? 'split' : 'wide') : followLayout;
 
   const loading =
-    contractsDb.loading ||
-    prospectsDb.loading ||
-    dealsDb.loading ||
+    projectsDb.loading ||
+    customersDb.loading ||
     partnersDb.loading ||
+    dealsDb.loading ||
     materialsDb.loading ||
     worklogsDb.loading;
   const dbError =
-    contractsDb.error ||
-    prospectsDb.error ||
-    dealsDb.error ||
+    projectsDb.error ||
+    customersDb.error ||
     partnersDb.error ||
+    dealsDb.error ||
     materialsDb.error ||
     worklogsDb.error;
 
-  const contracts = contractsDb.data;
-  const prospects = prospectsDb.data;
-  const deals = dealsDb.data;
+  const projects = projectsDb.data;
+  const customers = customersDb.data;
   const partners = partnersDb.data;
+  const deals = dealsDb.data;
   const materials = materialsDb.data;
   const worklogs = worklogsDb.data;
 
-  // ---- 流失（lost）/ 长期观察（watching）分流 ----
-  // 两者都只是角色行上的状态位：同一份客户主档 / 备注时间线不变，只是不进「在约 / 客户跟进 / 续约跟进」，
-  // 而是单独出现在左侧「Lost 客户」页（new-lost / renew-lost）与「长期观察」页。
-  const activeContracts = useMemo(() => contracts.filter((c) => c.status !== 'lost'), [contracts]);
-  const activeProspects = useMemo(
-    () => prospects.filter((p) => p.status !== 'lost' && p.status !== 'watching'),
-    [prospects]
-  );
-  // 长期观察：只收跟进类 New 客户（续约跟进关联在约合同，不参与长期观察）
-  const watchProspects = useMemo(
-    () => prospects.filter((p) => p.status === 'watching' && p.category !== 'renew'),
-    [prospects]
-  );
-  const lostNewProspects = useMemo(
-    () => prospects.filter((p) => p.status === 'lost' && p.category !== 'renew'),
-    [prospects]
-  );
-  const lostContracts = useMemo(() => contracts.filter((c) => c.status === 'lost'), [contracts]);
+  const activeProjects = useMemo(() => projects.filter((project) => project.status === 'active'), [projects]);
+  const signedProjects = useMemo(() => projects.filter((project) => project.status === 'won'), [projects]);
+  const watchingProjects = useMemo(() => projects.filter((project) => project.status === 'watching'), [projects]);
+  const lostProjects = useMemo(() => projects.filter((project) => project.status === 'lost'), [projects]);
 
   const stats = useMemo(() => {
     const today = todayStr();
-    // 统计只算进行中的客户：已标记 lost 的记录已归档到「Lost 客户」页，不占用待办 / 临期角标
-    const overdueFollow = activeProspects.filter((p) => p.nextFollowUp && daysUntil(p.nextFollowUp) < 0).length;
-    const dueTodayFollow = activeProspects.filter((p) => p.nextFollowUp === today).length;
-    const followDue = overdueFollow + dueTodayFollow;
-
-    const overdueContracts = activeContracts.filter((c) => daysUntil(c.expiryDate) < 0).length;
-    const expiring = activeContracts.filter((c) => {
-      const d = daysUntil(c.expiryDate);
-      return d != null && d <= RENEW_WINDOW_DAYS;
+    const overdueFollow = activeProjects.filter((project) => project.nextFollowUp && daysUntil(project.nextFollowUp) < 0).length;
+    const dueTodayFollow = activeProjects.filter((project) => project.nextFollowUp === today).length;
+    const overdueContracts = signedProjects.filter((project) => daysUntil(project.expiryDate) < 0).length;
+    const expiring = signedProjects.filter((project) => {
+      const days = daysUntil(project.expiryDate);
+      return days != null && days <= RENEW_WINDOW_DAYS;
     }).length;
-    const exp30 = activeContracts.filter((c) => {
-      const d = daysUntil(c.expiryDate);
-      return d != null && d >= 0 && d <= 30;
+    const exp30 = signedProjects.filter((project) => {
+      const days = daysUntil(project.expiryDate);
+      return days != null && days >= 0 && days <= 30;
     }).length;
-
-    const todayWork = worklogs.filter((w) => w.date === today).length;
-
-    const newDeals = deals.filter((d) => d.type !== 'renewal');
-    const newTotal = sumBy(newDeals, 'amount');
+    const newDeals = deals.filter((deal) => deal.type !== 'renewal');
     const monthKey = today.slice(0, 7);
-    const monthNew = sumBy(newDeals.filter((d) => monthOf(d.date) === monthKey), 'amount');
-    const newCount = newDeals.length;
-    return { overdueFollow, dueTodayFollow, followDue, overdueContracts, expiring, exp30, todayWork, newTotal, monthNew, newCount };
-  }, [activeContracts, activeProspects, deals, worklogs]);
+    return {
+      overdueFollow,
+      dueTodayFollow,
+      followDue: overdueFollow + dueTodayFollow,
+      overdueContracts,
+      expiring,
+      exp30,
+      todayWork: worklogs.filter((worklog) => worklog.date === today).length,
+      newTotal: sumBy(newDeals, 'amount'),
+      monthNew: sumBy(newDeals.filter((deal) => monthOf(deal.date) === monthKey), 'amount'),
+      newCount: newDeals.length,
+    };
+  }, [activeProjects, signedProjects, deals, worklogs]);
 
-  // 侧边导航角标（仅在有数量时显示）：只用于「需要处理」的板块——
-  // 今日工作不挂角标，避免刚记一条就被标成待办而误读
-  const navBadges = { follow: stats.followDue, contracts: stats.expiring };
+  const navBadges = { projects: stats.followDue, signed: stats.expiring };
 
-  // ---- 续约跟进同步：在约客户距到期 ≤ RENEW_WINDOW_DAYS 天（见 src/data/constants.js）自动带出 Renew 跟进；
-  //      不在约的续约客户由服务端补建在约记录，距到期更久的自动退出续约跟进（客户留在在约客户板块） ----
-  const syncRef = useRef(false);
-  const runSync = async () => {
-    try {
-      await api.syncRenewals();
-      await prospectsDb.reload();
-    } catch (err) {
-      setActionError(err.message);
-    }
+  const reloadCore = async () => {
+    await Promise.all([projectsDb.reload(), customersDb.reload()]);
   };
+
   useEffect(() => {
     if (loading || dbError || syncRef.current) return;
     syncRef.current = true;
-    runSync();
+    api
+      .syncRenewals()
+      .then(async (result) => {
+        if (result?.created) {
+          await reloadCore();
+          setActionNotice(`已自动创建 ${result.created} 个到期续约项目`);
+        }
+      })
+      .catch((err) => setActionError(err.message));
   }, [loading, dbError]);
 
-  const saveContract = async (data) => {
+  const detailProject = useMemo(() => {
+    if (!modal || modal.kind !== 'detailProject') return null;
+    return projects.find((project) => project.id === modal.id) || modal.project;
+  }, [modal, projects]);
+
+  const detailCustomer = useMemo(() => {
+    if (!modal || modal.kind !== 'detailCustomer') return null;
+    return customers.find((customer) => customer.id === modal.id) || modal.customer;
+  }, [modal, customers]);
+
+  const detailPartner = useMemo(() => {
+    if (!modal || modal.kind !== 'detailPartner') return null;
+    return partners.find((partner) => partner.id === modal.id) || modal.partner;
+  }, [modal, partners]);
+
+  const openProject = (project) => setModal({ kind: 'detailProject', id: project.id, project });
+  const openCustomer = (customerOrProject) => {
+    const id = customerOrProject.customerId || customerOrProject.id;
+    const customer = customers.find((item) => item.id === id);
+    if (!customer) {
+      setActionError('找不到对应客户，请刷新后重试');
+      return;
+    }
+    setModal({ kind: 'detailCustomer', id, customer });
+  };
+  const openPartner = (partner) => setModal({ kind: 'detailPartner', id: partner.id, partner });
+
+  const saveProject = async (data) => {
+    if (data.id) await projectsDb.update(data);
+    else await projectsDb.create({ ...data, id: uid() });
+    await reloadCore();
+    setModal(null);
+  };
+
+  const saveCustomer = async (data) => {
+    if (data.id) await customersDb.update(data);
+    else await customersDb.create({ ...data, id: uid() });
+    await customersDb.reload();
+    setModal(null);
+  };
+
+  const createCustomerFromProject = async (data) => {
+    const saved = await customersDb.create({ ...data, id: uid() });
+    await customersDb.reload();
+    return saved;
+  };
+
+  const savePartner = async (data) => {
+    if (data.id) await partnersDb.update(data);
+    else await partnersDb.create({ ...data, id: uid() });
+    await partnersDb.reload();
+    setModal(null);
+  };
+
+  const winProject = async (project, data) => {
+    await api.winProject(project.id, data);
+    await Promise.all([reloadCore(), dealsDb.reload()]);
+    setModal(null);
+    setActionNotice(`项目「${project.name}」已赢单并进入已签项目`);
+  };
+
+  const createRenewal = async (source, data) => {
+    await api.renewProject(source.id, data);
+    await reloadCore();
+    setModal(null);
+    setActionNotice(`已从「${source.name}」创建独立续约项目，原已签项目保留`);
+  };
+
+  const changeStatus = async (project, action, confirmText, notice) => {
+    if (!window.confirm(confirmText)) return;
     try {
-      let savedId = data.id;
-      if (data.id) await contractsDb.update(data);
-      else {
-        const saved = await contractsDb.create({ ...data, id: uid() });
-        savedId = saved.id;
-      }
-      await runSync();
-      setActionError('');
+      await api.markProject(project.id, action);
+      await reloadCore();
       setModal(null);
+      setActionNotice(notice);
     } catch (err) {
       setActionError(err.message);
     }
   };
 
-  const saveProspect = async (data) => {
+  const deleteProject = async (project) => {
+    if (!window.confirm(`确认删除项目「${project.name}」？客户主档和其他项目不会删除。`)) return;
     try {
-      let savedId = data.id;
-      if (data.id) await prospectsDb.update(data);
-      else {
-        // 新跟进客户默认归入 New（Renew 由到期 < RENEW_WINDOW_DAYS 天的在约客户自动生成）
-        const saved = await prospectsDb.create({ ...data, category: 'new', id: uid() });
-        savedId = saved.id;
-      }
-      setActionError('');
+      await api.removeProject(project.id);
+      await reloadCore();
       setModal(null);
+      setActionNotice(`项目「${project.name}」已删除`);
     } catch (err) {
       setActionError(err.message);
     }
   };
 
-  // 新建 / 编辑续约客户：统一交给服务端的「在约判定」——
-  // 已是在约客户 → 归入「在约客户」板块（续约信息与在约记录同步）；不在约 → 自动补建在约记录；
-  // 只有距到期 ≤ RENEW_WINDOW_DAYS 天（约两个月）的才留在「续约跟进」，更久的自动退出（客户留在在约客户板块）
-  const saveRenew = async (data) => {
+  const deleteCustomer = async (customer) => {
+    if (!window.confirm(`确认删除客户「${customer.name}」？有项目时系统会阻止删除。`)) return;
     try {
-      const result = await api.saveRenew(data);
-      // 在约客户 / 续约跟进两个板块都可能被服务端改动，一并重新拉取
-      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
-      setActionError('');
+      await customersDb.remove(customer.id);
       setModal(null);
-      setActionNotice(renewNotice(result));
+      setActionNotice(`客户「${customer.name}」已删除`);
+    } catch (err) {
+      setActionError(err.message);
+    }
+  };
+
+  const deletePartner = async (partner) => {
+    if (!window.confirm(`确认删除合作伙伴「${partner.name}」？关联项目会保留，但不再关联该合作伙伴。`)) return;
+    try {
+      await partnersDb.remove(partner.id);
+      await projectsDb.reload();
+      setModal(null);
+      setActionNotice(`合作伙伴「${partner.name}」已删除`);
     } catch (err) {
       setActionError(err.message);
     }
   };
 
   const saveDeal = async (data) => {
-    try {
-      await dealsDb.create({ ...data, type: 'new', id: uid() });
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // 新建 / 编辑合作伙伴（不含金额、跟进时间、订阅签约字段）
-  const savePartner = async (data) => {
-    try {
-      let savedId = data.id;
-      if (data.id) await partnersDb.update(data);
-      else {
-        const saved = await partnersDb.create({ ...data, id: uid() });
-        savedId = saved.id;
-      }
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // 跟进中的客户 → 转为在约客户：由一个事务完成「移出跟进 + 建立在约」，两者复用同一份客户主档
-  // （服务端 /api/prospects/:id/convert），名称/联系人/备注时间线保持连续，也不会出现半转换的中间态
-  const convertToContract = async (prospect, data) => {
-    if (prospect.category === 'renew') {
-      setActionError('续约跟进客户本身关联着在约合同，不能重复转为在约');
-      return;
-    }
-    try {
-      const saved = await api.convertProspect(prospect.id, data);
-      // 新客户（New）转为在约时，自动在金额看板记录一笔新签成交
-      await dealsDb.create({ id: uid(), customer: saved.name, type: 'new', amount: saved.contractAmount, date: todayStr() });
-      await runSync();
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  const removeContract = async (id) => {
-    if (!window.confirm('确认删除该在约客户？')) return;
-    try {
-      await contractsDb.remove(id);
-      await runSync();
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // 续约：订阅开始时间顺延为到期日次日，订阅到期时间自动往后延长一年
-  const renewContract = async (c) => {
-    const { startDate, expiryDate } = renewFrom(c.expiryDate);
-    if (
-      !window.confirm(
-        `确认续约「${c.name}」？\n订阅开始时间：${formatDate(c.startDate)} → ${formatDate(startDate)}\n订阅到期时间：${formatDate(c.expiryDate)} → ${formatDate(expiryDate)}`
-      )
-    ) {
-      return;
-    }
-    try {
-      await contractsDb.update({ ...c, startDate, expiryDate });
-      await runSync();
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  const removeProspect = async (id) => {
-    if (!window.confirm('确认删除该跟进客户？')) return;
-    try {
-      await prospectsDb.remove(id);
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // ---- 标记 lost / 恢复 ----
-  // lost 只是角色行上的状态位：客户主档、备注时间线与全部业务字段保持原样，
-  // 记录归档到「Lost 客户」页（New Lost / Renew Lost），随时可以恢复。
-  const markLost = async (customerType, customer) => {
-    const resource = customerType === 'contract' ? 'contracts' : 'prospects';
-    const extra =
-      customerType === 'contract' ? '\n该客户对应的续约跟进会一起归档到「Renew Lost」，不会重复出现两条。' : '';
-    if (
-      !window.confirm(
-        `确认把「${customer.name}」标记为 Lost？\n客户档案、SKU 与备注保持原样，可在「Lost 客户」页查看并恢复。${extra}`
-      )
-    ) {
-      return;
-    }
-    try {
-      await api.markLost(resource, customer.id);
-      // 在约客户流失会连带归档续约跟进，两个板块都重新拉取
-      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
-      setActionError('');
-      setModal(null);
-      setActionNotice(`客户「${customer.name}」已归档到「Lost 客户」，档案与备注保持原样，可在详情里「恢复为进行中」`);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // 转为长期观察：只是这条跟进记录的状态位（status='watching' + watchedAt），
-  // 不新建客户、不拆备注时间线；转入后不再安排定时跟进（nextFollowUp 清空），
-  // 客户从「客户跟进」移到「长期观察」页，随时可以「恢复跟进」。
-  const markWatching = async (prospect) => {
-    if (prospect.category === 'renew') {
-      setActionError('续约跟进客户关联着在约合同，不能转为长期观察');
-      return;
-    }
-    if (
-      !window.confirm(
-        `确认把「${prospect.name}」转为长期观察？\n转为长期观察后不再安排定时跟进，客户会移到「长期观察」页；客户档案、SKU 与备注保持原样，随时可恢复跟进。`
-      )
-    ) {
-      return;
-    }
-    try {
-      await api.markWatching(prospect.id);
-      await prospectsDb.reload();
-      setActionError('');
-      setModal(null);
-      setActionNotice(`客户「${prospect.name}」已转入「长期观察」，不再安排定时跟进；需要时可随时恢复跟进`);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  const restoreCustomer = async (customerType, customer) => {
-    const resource = customerType === 'contract' ? 'contracts' : 'prospects';
-    const watching = customer.status === 'watching';
-    const backTo = customerType === 'contract' ? '在约客户' : '客户跟进';
-    const hint = watching
-      ? `确认把「${customer.name}」恢复跟进？\n客户档案、SKU 与备注原样保留，恢复后回到「${backTo}」，重新按下一次跟进时间安排。`
-      : `确认把「${customer.name}」恢复为进行中？\n客户档案与备注原样保留，恢复后回到「${backTo}」板块。`;
-    if (!window.confirm(hint)) {
-      return;
-    }
-    try {
-      await api.restoreLost(resource, customer.id);
-      // 恢复在约客户时服务端会重新收口续约跟进，一并刷新两个板块
-      await Promise.all([prospectsDb.reload(), contractsDb.reload()]);
-      setActionError('');
-      setModal(null);
-      setActionNotice(
-        watching
-          ? `客户「${customer.name}」已恢复跟进，重新回到「${backTo}」板块`
-          : `客户「${customer.name}」已恢复为进行中，回到「${backTo}」板块`
-      );
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  const removePartner = async (id) => {
-    if (!window.confirm('确认删除该合作伙伴？')) return;
-    try {
-      await partnersDb.remove(id);
-      setActionError('');
-      setModal(null);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
-
-  // 打开「转为在约客户」弹窗：预填跟进客户信息（金额、联系人；订阅默认一年）
-  const convertProspect = (p) => {
-    const skus = skusOf(p);
-    setModal({
-      kind: 'convert',
-      data: p,
-      initial: {
-        name: p.name,
-        contact: p.contact || '',
-        // SKU 优先沿用跟进客户的 SKU 列表，避免「转为在约」后 SKU 被重置
-        plan: skus[0] || SKUS[0],
-        skus: skus.length ? skus : [SKUS[0]],
-        contractAmount: p.expectedAmount || '',
-        startDate: todayStr(),
-        expiryDate: oneYearFrom(todayStr()),
-      },
-    });
-  };
-
-  // 打开客户详情弹窗（点击客户名 / 详情按钮）
-  // 续约跟进（renew）与在约客户是同一份档案：详情直接打开它关联的在约记录，
-  // 从而与「在约客户」页面点开的详情完全一致（同样的字段、同样的「续约」入口、同一份备注时间线）
-  const openDetail = (customerType) => (customer) => {
-    if (customerType === 'prospect' && customer.category === 'renew') {
-      const linked =
-        contracts.find((c) => c.id === customer.contractId) ||
-        contracts.find((c) => customer.customerId && c.customerId === customer.customerId);
-      if (linked) {
-        setModal({ kind: 'detail', customerType: 'contract', customer: linked });
-        return;
-      }
-    }
-    setModal({ kind: 'detail', customerType, customer });
-  };
-
-  // 打开编辑弹窗：备注已改为每条独立成行、在详情中逐条管理，这里直接打开编辑表单即可
-  const openEditModal = (customerType, customer) => {
-    const kind = customerType === 'prospect' && customer.category === 'renew' ? 'renew' : customerType;
-    setModal({ kind, data: customer });
-  };
-
-  // 详情弹窗展示的客户：始终取列表里最新的一份——
-  // 备注是可追溯的「上次跟进」来源（服务端按最后一条备注重算），
-  // 让弹窗跟着 prospectsDb / contractsDb 的重新拉取一起刷新，不显示旧日期
-  const detailCustomer = useMemo(() => {
-    if (!modal || modal.kind !== 'detail') return null;
-    const source =
-      modal.customerType === 'contract' ? contracts : modal.customerType === 'partner' ? partners : prospects;
-    return source.find((x) => x.id === modal.customer.id) || modal.customer;
-  }, [modal, contracts, prospects, partners]);
-
-  // 新增 / 删除备注后：服务端已重算该客户的「上次 / 下次跟进」，
-  // 这里把跟进列表重新拉一遍，逾期天数、今日需跟进、侧栏角标随之更新（无需刷新页面）
-  const refreshFollowUps = async () => {
-    await prospectsDb.reload();
+    await dealsDb.create({ ...data, id: uid() });
+    setModal(null);
+    setActionNotice('成交记录已保存');
   };
 
   const uploadMaterials = async (files, note) => {
-    for (const file of files) {
-      await api.uploadMaterial(file, note);
-    }
+    for (const file of files) await api.uploadMaterial(file, note);
     await materialsDb.reload();
-    setActionError('');
-  };
-
-  const removeMaterial = async (id) => {
-    if (!window.confirm('确认删除该材料？删除后不可恢复。')) return;
-    try {
-      await materialsDb.remove(id);
-      setActionError('');
-    } catch (err) {
-      setActionError(err.message);
-    }
   };
 
   const addWorklog = async (content) => {
-    try {
-      await worklogsDb.create({ id: uid(), content, date: todayStr() });
-      setActionError('');
-    } catch (err) {
-      setActionError(err.message);
-      throw err; // 抛给 WorkJournal：保存失败时保留输入内容
-    }
+    await worklogsDb.create({ id: uid(), content, date: todayStr() });
   };
-
   const removeWorklog = async (id) => {
     if (!window.confirm('确认删除该条工作记录？')) return;
-    try {
-      await worklogsDb.remove(id);
-      setActionError('');
-    } catch (err) {
-      setActionError(err.message);
-    }
+    await worklogsDb.remove(id);
   };
-
   const updateWorklog = async (id, content) => {
-    try {
-      await worklogsDb.update({ id, content });
-      setActionError('');
-    } catch (err) {
-      setActionError(err.message);
-      throw err; // 抛给 WorkJournal：保存失败时保留编辑框
-    }
+    await worklogsDb.update({ id, content });
   };
 
   const retry = () => {
     setActionError('');
-    contractsDb.reload();
-    prospectsDb.reload();
-    dealsDb.reload();
+    projectsDb.reload();
+    customersDb.reload();
     partnersDb.reload();
+    dealsDb.reload();
     materialsDb.reload();
     worklogsDb.reload();
   };
 
-  const today = formatCnDate(todayStr());
-  // 页面骨架：侧栏 + 顶部栏 + 内容 + 页脚（页脚只留一行版本信息，不再暴露技术实现）
   const shell = (title, desc, content, badges = {}) => (
     <div className="app-shell">
       <Sidebar sections={SECTIONS} active={active.key} onSelect={selectNav} badges={badges} />
       <main className="app-main">
-        <Header today={today} title={title} desc={desc} />
+        <Header today={formatCnDate(todayStr())} title={title} desc={desc} />
         <div className="app-content">
           {actionError && (
             <div className="db-banner error">
@@ -594,7 +357,7 @@ export default function App() {
           )}
           {content}
         </div>
-        <footer className="footer">SMB 销售工作台 · v1.0.0</footer>
+        <footer className="footer">SMB 销售工作台 · v2.0.0</footer>
       </main>
     </div>
   );
@@ -604,12 +367,8 @@ export default function App() {
       'SMB 销售工作台',
       '正在连接数据服务',
       <div className="loading-state">
-        <span className="loading-dots">
-          <i />
-          <i />
-          <i />
-        </span>
-        正在连接数据库，加载数据…
+        <span className="loading-dots"><i /><i /><i /></span>
+        正在加载项目与客户数据…
       </div>
     );
   }
@@ -619,17 +378,9 @@ export default function App() {
       'SMB 销售工作台',
       '数据服务未就绪',
       <div className="db-error">
-        <h3>
-          <Icon name="alert" size={20} />
-          无法连接数据服务
-        </h3>
+        <h3><Icon name="alert" size={20} />无法连接数据服务</h3>
         <p>{dbError}</p>
-        <p className="db-error-hint">
-          请先在终端运行 <code>npm run server</code> 启动后端（默认端口 3001），然后点击重试。
-        </p>
-        <button type="button" className="btn btn-primary" onClick={retry}>
-          重试
-        </button>
+        <button type="button" className="btn btn-primary" onClick={retry}>重试</button>
       </div>
     );
   }
@@ -640,122 +391,152 @@ export default function App() {
       content = (
         <Home
           stats={stats}
-          contracts={activeContracts}
+          projects={signedProjects}
           today={todayStr()}
-          onView={openDetail('contract')}
-          onRenew={renewContract}
+          onView={openProject}
+          onRenew={(project) => setModal({ kind: 'renew', source: project })}
         />
       );
       break;
     case 'journal':
       content = <WorkJournal entries={worklogs} onAdd={addWorklog} onRemove={removeWorklog} onEdit={updateWorklog} />;
       break;
-    case 'follow':
+    case 'projects':
       content = (
         <section className="workspace">
           <div className="workspace-head">
             <div>
-              <h2>客户跟进</h2>
-              <p className="panel-desc">
-                New / Renew 分流跟进，构成你的主体工作区；每条客户的工作记录写在「详情 → 备注」里
-              </p>
+              <h2>项目跟进</h2>
+              <p className="panel-desc">同一客户可以并行多个项目；赢单、Lost、长期观察都只改变当前项目</p>
             </div>
             <div className="workspace-tools">
-              <span className="workspace-tools-hint" title="当前窗口尺寸，板块会自动按它调整大小">
-                窗口 {viewport.width}×{viewport.height}
-              </span>
+              <span className="workspace-tools-hint">窗口 {viewport.width}×{viewport.height}</span>
               <span className="workspace-tools-label">板块尺寸</span>
-              <div className="seg-toggle" role="group" aria-label="客户跟进板块尺寸">
-                {FOLLOW_LAYOUTS.map((l) => (
+              <div className="seg-toggle" role="group" aria-label="项目跟进板块尺寸">
+                {FOLLOW_LAYOUTS.map((layout) => (
                   <button
-                    key={l.key}
+                    key={layout.key}
                     type="button"
-                    className={followLayout === l.key ? 'active' : ''}
-                    title={l.title}
-                    onClick={() => setFollowLayout(l.key)}
+                    className={followLayout === layout.key ? 'active' : ''}
+                    title={layout.title}
+                    onClick={() => setFollowLayout(layout.key)}
                   >
-                    {l.label}
+                    {layout.label}
                   </button>
                 ))}
               </div>
             </div>
           </div>
           <div className={`workspace-grid${layoutMode === 'wide' ? ' grid-wide' : ''}`}>
-            <ProspectList
-              prospects={activeProspects}
+            <ProjectList
+              projects={activeProjects}
               variant="new"
               wide={layoutMode === 'wide'}
-              onAdd={() => setModal({ kind: 'prospect' })}
-              onView={openDetail('prospect')}
-              onWatch={markWatching}
+              onAdd={() => setModal({ kind: 'project', initial: { category: 'new', status: 'active' }, defaultCategory: 'new' })}
+              onView={openProject}
+              onCustomer={openCustomer}
+              onWatch={(project) =>
+                changeStatus(
+                  project,
+                  'watch',
+                  `确认把项目「${project.name}」转为长期观察？同客户其他项目不受影响。`,
+                  `项目「${project.name}」已转入长期观察`
+                )
+              }
             />
-            <ProspectList
-              prospects={activeProspects}
+            <ProjectList
+              projects={activeProjects}
               variant="renew"
               wide={layoutMode === 'wide'}
-              onAdd={() => setModal({ kind: 'renew' })}
-              onView={openDetail('prospect')}
+              onAdd={() => setModal({ kind: 'project', initial: { category: 'renew', status: 'active' }, defaultCategory: 'renew' })}
+              onView={openProject}
+              onCustomer={openCustomer}
             />
           </div>
         </section>
+      );
+      break;
+    case 'signed':
+      content = (
+        <SignedProjects
+          projects={signedProjects}
+          onView={openProject}
+          onCustomer={openCustomer}
+          onRenew={(project) => setModal({ kind: 'renew', source: project })}
+        />
+      );
+      break;
+    case 'customers':
+      content = (
+        <CustomerList
+          customers={customers}
+          onAdd={() => setModal({ kind: 'customer' })}
+          onView={openCustomer}
+        />
       );
       break;
     case 'watch':
       content = (
-        <section className="workspace">
-          <div className="workspace-head">
-            <div>
-              <h2>长期观察</h2>
-              <p className="panel-desc">
-                不需要设定时跟进、但需要长期留意的客户收在这里；转入不新建客户、不复制档案，
-                客户档案、SKU 与备注时间线保持原样，需要时随时「恢复跟进」
-              </p>
-            </div>
-          </div>
-          <div className="workspace-grid grid-wide">
-            <WatchList prospects={watchProspects} onView={openDetail('prospect')} onRestore={(p) => restoreCustomer('prospect', p)} />
-          </div>
-        </section>
+        <div className="workspace-grid grid-wide">
+          <WatchList
+            projects={watchingProjects}
+            onView={openProject}
+            onCustomer={openCustomer}
+            onRestore={(project) =>
+              changeStatus(
+                project,
+                'restore',
+                `确认恢复项目「${project.name}」？只恢复这个项目，其他项目不变。`,
+                `项目「${project.name}」已恢复跟进`
+              )
+            }
+          />
+        </div>
       );
       break;
     case 'lost':
       content = (
-        <section className="workspace">
-          <div className="workspace-head">
-            <div>
-              <h2>Lost 客户</h2>
-              <p className="panel-desc">
-                不论 New 还是 Renew，标记为 lost 的客户都归档在这里，分「New 流失」与「Renew 流失」两块；
-                客户档案与备注时间线保持放入 lost 前的样子，随时可以恢复
-              </p>
-            </div>
-          </div>
-          <LostCustomers
-            newLost={lostNewProspects}
-            renewLost={lostContracts}
-            onViewNew={openDetail('prospect')}
-            onViewRenew={openDetail('contract')}
+        <div className="workspace-grid grid-wide">
+          <LostProjects
+            projects={lostProjects}
+            onView={openProject}
+            onCustomer={openCustomer}
+            onRestore={(project) =>
+              changeStatus(
+                project,
+                'restore',
+                `确认恢复项目「${project.name}」？客户与其他项目不受影响。`,
+                `项目「${project.name}」已恢复为进行中`
+              )
+            }
           />
-        </section>
+        </div>
       );
-      break;
-    case 'contracts':
-      content = <ExpiringContracts contracts={activeContracts} onView={openDetail('contract')} />;
-      break;
-    case 'revenue':
-      content = <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />;
       break;
     case 'partners':
       content = (
         <PartnerList
           partners={partners}
+          projects={projects}
           onAdd={() => setModal({ kind: 'partner' })}
-          onView={openDetail('partner')}
+          onView={openPartner}
         />
       );
       break;
+    case 'revenue':
+      content = <RevenuePanel deals={deals} onAdd={() => setModal({ kind: 'deal' })} />;
+      break;
     case 'materials':
-      content = <MaterialLibrary materials={materials} onUpload={uploadMaterials} onDelete={removeMaterial} />;
+      content = (
+        <MaterialLibrary
+          materials={materials}
+          onUpload={uploadMaterials}
+          onDelete={async (id) => {
+            if (!window.confirm('确认删除该材料？删除后不可恢复。')) return;
+            await materialsDb.remove(id);
+          }}
+        />
+      );
       break;
     default:
       content = null;
@@ -770,75 +551,140 @@ export default function App() {
           title={modalTitle(modal)}
           onClose={() => setModal(null)}
           error={actionError}
-          wide={modal.kind !== 'detail'}
-          detail={modal.kind === 'detail'}
+          wide={!['detailProject', 'detailCustomer', 'detailPartner'].includes(modal.kind)}
+          detail={['detailProject', 'detailCustomer', 'detailPartner'].includes(modal.kind)}
         >
-          {modal.kind === 'contract' && (
-            <ContractForm
-              key={modal.data?.id || 'new'}
-              initial={modal.data}
-              onSave={saveContract}
+          {modal.kind === 'project' && (
+            <ProjectForm
+              key={modal.data?.id || modal.initial?.customerId || 'new-project'}
+              initial={modal.data || modal.initial || null}
+              customers={customers}
+              partners={partners}
+              onCreateCustomer={createCustomerFromProject}
+              onSave={saveProject}
               onCancel={() => setModal(null)}
-            />
-          )}
-          {modal.kind === 'convert' && (
-            <ContractForm
-              key={`convert-${modal.data.id}`}
-              initial={modal.initial}
-              onSave={(data) => convertToContract(modal.data, data)}
-              onCancel={() => setModal(null)}
-            />
-          )}
-          {modal.kind === 'prospect' && (
-            <ProspectForm
-              key={modal.data?.id || 'new'}
-              initial={modal.data}
-              onSave={saveProspect}
-              onCancel={() => setModal(null)}
+              defaultCategory={modal.defaultCategory || 'new'}
             />
           )}
           {modal.kind === 'renew' && (
-            <RenewForm
-              key={modal.data?.id || 'new'}
-              initial={renewInitial(modal.data, contracts)}
-              onSave={saveRenew}
+            <ProjectForm
+              key={`renew-${modal.source.id}`}
+              initial={{
+                ...modal.source,
+                id: null,
+                name: `${modal.source.name} · 续约`,
+                status: 'active',
+                category: 'renew',
+                contractAmount: null,
+                startDate: null,
+              }}
+              customers={customers}
+              partners={partners}
+              onCreateCustomer={createCustomerFromProject}
+              onSave={(data) => createRenewal(modal.source, data)}
+              onCancel={() => setModal(null)}
+              defaultCategory="renew"
+              renewMode
+              lockCustomer
+            />
+          )}
+          {modal.kind === 'win' && (
+            <WinProjectForm
+              project={modal.project}
+              onSave={(data) => winProject(modal.project, data)}
+              onCancel={() => setModal(null)}
+            />
+          )}
+          {modal.kind === 'customer' && (
+            <CustomerForm
+              key={modal.data?.id || 'new-customer'}
+              initial={modal.data}
+              onSave={saveCustomer}
               onCancel={() => setModal(null)}
             />
           )}
           {modal.kind === 'partner' && (
             <PartnerForm
-              key={modal.data?.id || 'new'}
+              key={modal.data?.id || 'new-partner'}
               initial={modal.data}
               onSave={savePartner}
               onCancel={() => setModal(null)}
             />
           )}
-          {modal.kind === 'detail' && (
-            <CustomerDetail
-              customerType={modal.customerType}
-              customer={detailCustomer}
-              onNotesChanged={refreshFollowUps}
-              onEdit={() => openEditModal(modal.customerType, detailCustomer)}
-              onRenew={modal.customerType === 'contract' ? () => renewContract(detailCustomer) : undefined}
-              onConvert={modal.customerType === 'prospect' ? () => convertProspect(detailCustomer) : undefined}
-              onWatch={
-                modal.customerType === 'prospect' ? () => markWatching(detailCustomer) : undefined
+          {modal.kind === 'deal' && (
+            <DealForm projects={projects} onSave={saveDeal} onCancel={() => setModal(null)} />
+          )}
+
+          {modal.kind === 'detailProject' && detailProject && (
+            <ProjectDetail
+              project={detailProject}
+              onEdit={() => setModal({ kind: 'project', data: detailProject })}
+              onWin={() => setModal({ kind: 'win', project: detailProject })}
+              onRenew={() => setModal({ kind: 'renew', source: detailProject })}
+              onWatch={() =>
+                changeStatus(
+                  detailProject,
+                  'watch',
+                  `确认把项目「${detailProject.name}」转为长期观察？`,
+                  `项目「${detailProject.name}」已转入长期观察`
+                )
               }
-              onMarkLost={
-                modal.customerType === 'partner' ? undefined : () => markLost(modal.customerType, detailCustomer)
+              onLost={() =>
+                changeStatus(
+                  detailProject,
+                  'lost',
+                  `确认把项目「${detailProject.name}」标记为 Lost？客户与其他项目不受影响。`,
+                  `项目「${detailProject.name}」已标记 Lost`
+                )
               }
-              onRestore={
-                modal.customerType === 'partner' ? undefined : () => restoreCustomer(modal.customerType, detailCustomer)
+              onRestore={() =>
+                changeStatus(
+                  detailProject,
+                  'restore',
+                  `确认恢复项目「${detailProject.name}」？`,
+                  `项目「${detailProject.name}」已恢复为进行中`
+                )
               }
-              onDelete={() => {
-                if (modal.customerType === 'contract') removeContract(detailCustomer.id);
-                else if (modal.customerType === 'prospect') removeProspect(detailCustomer.id);
-                else removePartner(detailCustomer.id);
+              onDelete={() => deleteProject(detailProject)}
+              onCustomer={() => openCustomer(detailProject)}
+              onNotesChanged={async () => {
+                await reloadCore();
               }}
             />
           )}
-          {modal.kind === 'deal' && (
-            <DealForm onSave={saveDeal} onCancel={() => setModal(null)} />
+
+          {modal.kind === 'detailCustomer' && detailCustomer && (
+            <CustomerDetail
+              customer={detailCustomer}
+              projects={projects.filter((project) => project.customerId === detailCustomer.id)}
+              onEdit={() => setModal({ kind: 'customer', data: detailCustomer })}
+              onDelete={() => deleteCustomer(detailCustomer)}
+              onNewProject={() =>
+                setModal({
+                  kind: 'project',
+                  initial: {
+                    customerId: detailCustomer.id,
+                    customerName: detailCustomer.name,
+                    category: 'new',
+                    status: 'active',
+                  },
+                  defaultCategory: 'new',
+                })
+              }
+              onViewProject={openProject}
+              onNotesChanged={reloadCore}
+            />
+          )}
+
+          {modal.kind === 'detailPartner' && detailPartner && (
+            <PartnerDetail
+              partner={detailPartner}
+              projects={projects.filter((project) => project.partnerId === detailPartner.id)}
+              onEdit={() => setModal({ kind: 'partner', data: detailPartner })}
+              onDelete={() => deletePartner(detailPartner)}
+              onViewProject={openProject}
+              onNotesChanged={reloadCore}
+            />
           )}
         </Modal>
       )}

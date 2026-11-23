@@ -4,85 +4,50 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// 统一使用中国时区（UTC+8）：SQLite datetime('now') 存的是 UTC，备注的 [HH:MM] 标记与“今天”判断
-// 都依赖服务器进程时区。这里无条件强制 +08:00（即使部署环境 TZ=UTC 也会覆盖），
-// 避免备注时间比本地慢/快数小时，并保证与前端浏览器（中国时区）显示一致。
 process.env.TZ = 'Asia/Shanghai';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'smb.db');
+const DB_FILE = process.env.SMB_DB_FILE ? path.resolve(process.env.SMB_DB_FILE) : path.join(DATA_DIR, 'smb.db');
 
-/**
- * multer/busboy 解析 multipart 时，文件原始文件名默认按 latin1 解码，
- * 中文等非 ASCII 文件名会变成乱码（如「产品报价.pdf」→「äº§åä¼°ä»·.pdf」）。
- * 这里按 latin1 → UTF-8 重新解码还原；若重解码出现替换符，说明原名本身就是合法 UTF-8，则原样保留。
- */
+fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+
 export function toUtf8(name) {
   if (!name) return name;
   const decoded = Buffer.from(String(name), 'latin1').toString('utf8');
   return decoded.includes('\uFFFD') ? String(name) : decoded;
 }
 
-/**
- * 客户名称规范化：客户主档以「名称」作为同一家公司的唯一身份标识，
- * 因此统一去掉首尾空白、把连续空白折叠为一个空格
- * （避免「阿里巴巴科技 」「阿里巴巴科技」或「阿里 巴巴」被当成不同客户）。
- * 所有写入 customers.name 的地方都必须先经过这里。
- */
 export function normalizeCustomerName(name) {
   return String(name ?? '').trim().replace(/\s+/g, ' ');
 }
 
-// 自动创建数据目录（数据库文件首次启动时生成，不预置任何演示数据）
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const uid = () => Date.now().toString(36) + crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+
+function parseSkus(row) {
+  const raw = row?.skus;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return list.filter(Boolean);
+    } catch {
+      if (raw.trim()) return [raw.trim()];
+    }
+  }
+  return row?.plan ? [row.plan] : [];
+}
 
 export const db = new Database(DB_FILE);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
 db.exec(`
-  CREATE TABLE IF NOT EXISTS contracts (
-    id             TEXT PRIMARY KEY,
-    name           TEXT NOT NULL,
-    plan           TEXT NOT NULL,
-    contact        TEXT DEFAULT '',
-    contractAmount REAL NOT NULL,
-    startDate      TEXT NOT NULL,
-    expiryDate     TEXT NOT NULL,
-    note           TEXT DEFAULT '',
-    skus           TEXT DEFAULT '[]',   -- SKU 列表（JSON 数组文本，plan 保留第一条作为主 SKU）
-    status         TEXT DEFAULT 'active', -- 'active' | 'lost'（lost = 已流失，归档到「Lost 客户」页）
-    lostAt         TEXT,                  -- 标记 lost 的日期（客户档案保持原样，只变状态位）
-    createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS prospects (
-    id             TEXT PRIMARY KEY,
-    name           TEXT NOT NULL,
-    stage          TEXT NOT NULL,
-    contact        TEXT DEFAULT '',
-    expectedAmount REAL NOT NULL,
-    lastFollowUp   TEXT,
-    nextFollowUp   TEXT,
-    category       TEXT DEFAULT 'new',   -- 'new' | 'renew'
-    contractId     TEXT DEFAULT '',      -- renew 跟进所关联的在约客户 id
-    expiryDate     TEXT,                 -- renew 跟进对应的在约到期时间（冗余，便于展示）
-    plan           TEXT DEFAULT '',      -- renew 跟进的 SKU（与在约记录同步，用于自动补建在约）
-    skus           TEXT DEFAULT '[]',    -- SKU 列表（JSON 数组文本，plan 为第一条）
-    status         TEXT DEFAULT 'active',-- 'active' | 'lost'（已流失）| 'watching'（长期观察）
-    lostAt         TEXT,                 -- 标记 lost 的日期（客户档案保持原样，只变状态位）
-    watchedAt      TEXT,                 -- 转入「长期观察」的日期（同上，只是状态位）
-    note           TEXT DEFAULT '',
-    createdAt      TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE TABLE IF NOT EXISTS deals (
+  CREATE TABLE IF NOT EXISTS customers (
     id        TEXT PRIMARY KEY,
-    customer  TEXT NOT NULL,
-    type      TEXT NOT NULL,
-    amount    REAL NOT NULL,
-    date      TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    contact   TEXT DEFAULT '',
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -93,343 +58,352 @@ db.exec(`
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS projects (
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    customerId     TEXT NOT NULL REFERENCES customers(id) ON DELETE RESTRICT,
+    partnerId      TEXT REFERENCES partners(id) ON DELETE SET NULL,
+    category       TEXT,
+    status         TEXT NOT NULL DEFAULT 'active',
+    contact        TEXT DEFAULT '',
+    expectedAmount REAL NOT NULL DEFAULT 0,
+    contractAmount REAL,
+    skus           TEXT NOT NULL DEFAULT '[]',
+    lastFollowUp   TEXT,
+    nextFollowUp   TEXT,
+    startDate      TEXT,
+    expiryDate     TEXT,
+    sourceProjectId TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    lostAt         TEXT,
+    watchedAt      TEXT,
+    createdAt      TEXT NOT NULL DEFAULT (datetime('now')),
+    closedAt       TEXT,
+    CHECK (category IS NULL OR category IN ('new', 'renew')),
+    CHECK (status IN ('active', 'watching', 'won', 'lost'))
+  );
+
+  CREATE TABLE IF NOT EXISTS deals (
+    id         TEXT PRIMARY KEY,
+    customer   TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    amount     REAL NOT NULL,
+    date       TEXT NOT NULL,
+    createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS materials (
     id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,      -- 原始文件名
-    storedName TEXT NOT NULL,      -- 服务器存储文件名（随机生成，唯一）
-    mime       TEXT DEFAULT '',    -- MIME 类型
-    size       INTEGER NOT NULL,   -- 文件大小（字节）
-    ext        TEXT DEFAULT '',    -- 小写扩展名
-    note       TEXT DEFAULT '',    -- 备注
+    name       TEXT NOT NULL,
+    storedName TEXT NOT NULL,
+    mime       TEXT DEFAULT '',
+    size       INTEGER NOT NULL,
+    ext        TEXT DEFAULT '',
+    note       TEXT DEFAULT '',
     createdAt  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS notes (
     id           TEXT PRIMARY KEY,
-    customerType TEXT NOT NULL,      -- 'contract' | 'prospect' | 'partner'
-    customerId   TEXT NOT NULL,      -- 关联客户 id
-    content      TEXT NOT NULL,      -- 备注内容
+    customerType TEXT NOT NULL,
+    customerId   TEXT NOT NULL,
+    content      TEXT NOT NULL,
     createdAt    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  CREATE INDEX IF NOT EXISTS idx_notes_customer ON notes(customerType, customerId);
-
   CREATE TABLE IF NOT EXISTS worklogs (
     id        TEXT PRIMARY KEY,
-    content   TEXT NOT NULL,      -- 当天的工作内容 / 记录
-    date      TEXT NOT NULL,      -- 归属日期 YYYY-MM-DD（默认当天）
+    content   TEXT NOT NULL,
+    date      TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
-  -- 客户主档：同一家公司在「跟进 / 在约」板块共享同一条记录，杜绝复制粘贴
-  CREATE TABLE IF NOT EXISTS customers (
-    id        TEXT PRIMARY KEY,
-    name      TEXT NOT NULL,      -- 客户名称（统一主档，同一家公司一份）
-    contact   TEXT DEFAULT '',    -- 联系人（统一主档）
-    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+  CREATE TABLE IF NOT EXISTS schema_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS _migration_map (
+    sourceType TEXT NOT NULL,
+    sourceId   TEXT NOT NULL,
+    projectId  TEXT,
+    customerId TEXT,
+    PRIMARY KEY (sourceType, sourceId)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notes_customer ON notes(customerType, customerId);
+  CREATE INDEX IF NOT EXISTS idx_projects_customer ON projects(customerId);
+  CREATE INDEX IF NOT EXISTS idx_projects_partner ON projects(partnerId);
+  CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+  CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category);
+  CREATE INDEX IF NOT EXISTS idx_projects_expiry ON projects(expiryDate);
+  CREATE INDEX IF NOT EXISTS idx_projects_source ON projects(sourceProjectId);
 `);
 
-// 迁移：移除旧版本遗留的「负责人」（owner）字段（SQLite >= 3.35 支持 DROP COLUMN，幂等）
-for (const table of ['contracts', 'prospects']) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (cols.some((c) => c.name === 'owner')) {
-    db.exec(`ALTER TABLE ${table} DROP COLUMN owner`);
-    console.log(`✅ 已从 ${table} 表移除遗留字段 owner`);
-  }
+function columnsOf(table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 }
 
-// 迁移：移除合作伙伴的单一「联系人」字段（一个合作伙伴可能有多个联系人，联系人改为逐条记在备注时间线）。
-// 为了不丢历史信息：先把非空的 contact 写进该合作伙伴的备注时间线（customerType='partner'），
-// 再移除 partners.contact 列；幂等（列不存在时直接跳过）。
-const partnerColsBefore = db.prepare(`PRAGMA table_info(partners)`).all().map((c) => c.name);
-if (partnerColsBefore.includes('contact')) {
-  const rows = db
-    .prepare(`SELECT id, contact FROM partners WHERE contact IS NOT NULL AND TRIM(contact) != ''`)
-    .all();
-  let movedContacts = 0;
-  const existsNote = db.prepare(
-    `SELECT 1 FROM notes WHERE customerType = 'partner' AND customerId = ? AND content = ?`
-  );
-  for (const r of rows) {
-    const content = `联系人：${String(r.contact).trim()}`;
-    if (existsNote.get(r.id, content)) continue;
-    db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, 'partner', ?, ?)`).run(
-      crypto.randomUUID(),
-      r.id,
-      content
-    );
-    movedContacts++;
-  }
-  db.exec(`ALTER TABLE partners DROP COLUMN contact`);
-  if (movedContacts > 0) {
-    console.log(`✅ 已将 ${movedContacts} 条合作伙伴联系人迁移到备注时间线，并从 partners 表移除 contact 字段`);
-  } else {
-    console.log('✅ 已从 partners 表移除 contact 字段（合作伙伴联系人改为备注时间线，可记录多个）');
-  }
+function tableExists(table) {
+  return !!db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table);
 }
 
-// 迁移：修复材料库历史乱码文件名 / 备注（旧版本 multipart 文件名按 latin1 解码导致）
-const materials = db.prepare(`SELECT id, name, note FROM materials`).all();
-let repaired = 0;
-for (const row of materials) {
-  const name = toUtf8(row.name);
-  const note = toUtf8(row.note || '');
-  if (name !== row.name || note !== (row.note || '')) {
-    db.prepare(`UPDATE materials SET name = ?, note = ? WHERE id = ?`).run(name, note, row.id);
-    repaired++;
-  }
-}
-if (repaired > 0) {
-  console.log(`✅ 已修复 ${repaired} 条材料库乱码文件名/备注`);
+function ensureColumn(table, name, definition) {
+  if (!tableExists(table)) return;
+  if (!columnsOf(table).includes(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
 }
 
-// 迁移：把旧版「单条备注」迁移到 notes 备注时间线表（按客户去重，幂等）
-const migrateNotes = (customerType, table) => {
-  const rows = db.prepare(`SELECT id, note FROM ${table} WHERE note IS NOT NULL AND note != ''`).all();
-  let moved = 0;
-  for (const r of rows) {
-    const exists = db.prepare(`SELECT 1 FROM notes WHERE customerType = ? AND customerId = ?`).get(customerType, r.id);
-    if (!exists) {
-      db.prepare(`INSERT INTO notes (id, customerType, customerId, content) VALUES (?, ?, ?, ?)`).run(
-        crypto.randomUUID(),
-        customerType,
-        r.id,
-        r.note
-      );
-      moved++;
-    }
-  }
-  if (moved > 0) console.log(`✅ 已将 ${moved} 条 ${table} 备注迁移到备注时间线`);
-};
-migrateNotes('contract', 'contracts');
-migrateNotes('prospect', 'prospects');
-migrateNotes('partner', 'partners');
+ensureColumn('notes', 'projectId', 'TEXT');
+ensureColumn('deals', 'projectId', 'TEXT');
+ensureColumn('deals', 'customerId', 'TEXT');
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(projectId);
+  CREATE INDEX IF NOT EXISTS idx_deals_project ON deals(projectId);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_deals_project_unique
+    ON deals(projectId) WHERE projectId IS NOT NULL AND projectId != '';
+`);
 
-// 迁移：跟进客户增加 New/Renew 分类与续约关联字段（现有客户默认均为 New，幂等）
-const prospectCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
-if (!prospectCols.includes('category')) db.exec(`ALTER TABLE prospects ADD COLUMN category TEXT DEFAULT 'new'`);
-if (!prospectCols.includes('contractId')) db.exec(`ALTER TABLE prospects ADD COLUMN contractId TEXT DEFAULT ''`);
-if (!prospectCols.includes('expiryDate')) db.exec(`ALTER TABLE prospects ADD COLUMN expiryDate TEXT`);
-// 迁移：续约跟进角色记录 SKU。不在约的续约客户会被自动补建在约记录，SKU 即取自这里（幂等）
-if (!prospectCols.includes('plan')) db.exec(`ALTER TABLE prospects ADD COLUMN plan TEXT DEFAULT ''`);
-
-// 迁移：一个客户可以配置多条 SKU —— 在约 / 跟进记录增加 skus（JSON 数组文本），
-// plan 继续保留第一条作为主 SKU，现有续约判定 / 金额逻辑沿用 plan，不受影响。
-for (const table of ['contracts', 'prospects']) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!cols.includes('skus')) db.exec(`ALTER TABLE ${table} ADD COLUMN skus TEXT DEFAULT '[]'`);
-}
-// 回填：历史记录只有单个 plan，补成 [plan]，让表单与详情拿到完整列表（幂等）
-for (const table of ['contracts', 'prospects']) {
-  const rows = db.prepare(`SELECT id, plan, skus FROM ${table}`).all();
-  for (const row of rows) {
-    let list = [];
-    try {
-      const parsed = JSON.parse(row.skus || '[]');
-      if (Array.isArray(parsed)) list = parsed.filter(Boolean);
-    } catch {
-      list = [];
-    }
-    if (!list.length && row.plan) {
-      db.prepare(`UPDATE ${table} SET skus = ? WHERE id = ?`).run(JSON.stringify([row.plan]), row.id);
-    }
-  }
-}
-
-// 迁移：流失标记 —— 在约 / 跟进角色增加 status（active | lost）与 lostAt（幂等）。
-// lost 只是一个状态位：客户主档、备注时间线与全部业务字段保持原样，
-// 客户只是从「在约客户 / 客户跟进 / 续约跟进」移到左侧「Lost 客户」页（分 new-lost / renew-lost）。
-for (const table of ['contracts', 'prospects']) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
-  if (!cols.includes('status')) db.exec(`ALTER TABLE ${table} ADD COLUMN status TEXT DEFAULT 'active'`);
-  if (!cols.includes('lostAt')) db.exec(`ALTER TABLE ${table} ADD COLUMN lostAt TEXT`);
-}
-
-// 迁移：长期观察 —— 跟进角色增加 watchedAt（转入长期观察的日期，幂等）。
-// 「长期观察」与 lost 一样只是 prospects 行上的状态位（status = 'watching'）：
-// 客户主档（customers）、SKU、金额与备注时间线原样保留，同一客户始终只有一条角色行；
-// 客户只是从「客户跟进」移到左侧「长期观察」页，且不再安排定时跟进（nextFollowUp 置空）。
-const watchCols = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
-if (!watchCols.includes('watchedAt')) db.exec(`ALTER TABLE prospects ADD COLUMN watchedAt TEXT`);
-
-// 迁移：把「同日合并」的历史备注拆分成独立备注，让每条备注都能单独编辑 / 删除（与「今日工作记录」一致）。
-// 旧版本会把同一天（本地时区）的多条备注合并成一条，以 [HH:MM] 作为时间标记；新版本取消合并、每条备注独立成行，
-// 因此这里把存量合并行拆开，并把 [HH:MM] 标记还原为该条备注的真实时间（写入 createdAt），实现幂等。
-export function splitMergedNotes(database = db) {
-  const rows = database
-    .prepare(`SELECT id, customerType, customerId, content, createdAt FROM notes ORDER BY createdAt ASC`)
-    .all();
-  const MARKER = /^\[(\d{1,2}):(\d{2})\]\s*(.*)$/;
-  let changed = 0;
-  for (const r of rows) {
-    const lines = String(r.content || '').split('\n');
-    const entries = [];
-    let cur = null;
-    for (const line of lines) {
-      const m = line.match(MARKER);
-      if (m) {
-        cur = { text: m[3].trim(), h: +m[1], mi: +m[2] };
-        entries.push(cur);
-      } else if (cur) {
-        // 无时间标记的行视为上一条备注的续行，归并到该条里
-        cur.text = (cur.text ? cur.text + '\n' : '') + line;
-      } else {
-        cur = { text: line, h: null, mi: null };
-        entries.push(cur);
-      }
-    }
-    if (!entries.length || entries.every((e) => e.h == null)) continue; // 无时间标记的原始备注，保持不变
-
-    // 以原备注的本地日期为基准，结合 [HH:MM] 还原各条的真实时间
-    const base = new Date(String(r.createdAt).replace(' ', 'T') + 'Z');
-    if (Number.isNaN(base.getTime())) continue;
-    const y = base.getFullYear();
-    const mo = base.getMonth();
-    const da = base.getDate();
-    const rowsNew = entries.map((e) => {
-      let ts = r.createdAt;
-      if (e.h != null) ts = new Date(y, mo, da, e.h, e.mi, 0, 0).toISOString().slice(0, 19).replace('T', ' ');
-      return { id: crypto.randomUUID(), customerType: r.customerType, customerId: r.customerId, content: e.text, createdAt: ts };
-    });
-    // 单条且无改动则跳过，避免每次启动都改写
-    if (rowsNew.length === 1 && rowsNew[0].content === r.content && rowsNew[0].createdAt === r.createdAt) continue;
-
-    database.transaction(() => {
-      database.prepare(`DELETE FROM notes WHERE id = ?`).run(r.id);
-      const ins = database.prepare(`INSERT INTO notes (id, customerType, customerId, content, createdAt) VALUES (?, ?, ?, ?, ?)`);
-      for (const nr of rowsNew) ins.run(nr.id, nr.customerType, nr.customerId, nr.content, nr.createdAt);
-    })();
-    changed += rowsNew.length;
-  }
-  if (changed > 0) console.log(`✅ 已将 ${changed} 条「同日合并」备注拆分为独立备注`);
-  return changed;
-}
-splitMergedNotes();
-
-// 迁移：建立「客户主档」统一档案，让同一家公司在「跟进 / 在约」板块共享同一份资料与备注。
-//  - contracts / prospects 通过 customerId 指向 customers（同一家公司的唯一身份）
-//  - 备注统一存放到 customerType='customer' 下，按 customerId 汇聚成同一条时间线
-//  - 合作伙伴（partners）保持独立档案，不与客户主档关联
-const contractColsForCust = db.prepare(`PRAGMA table_info(contracts)`).all().map((c) => c.name);
-if (!contractColsForCust.includes('customerId')) db.exec(`ALTER TABLE contracts ADD COLUMN customerId TEXT DEFAULT ''`);
-const prospectColsForCust = db.prepare(`PRAGMA table_info(prospects)`).all().map((c) => c.name);
-if (!prospectColsForCust.includes('customerId')) db.exec(`ALTER TABLE prospects ADD COLUMN customerId TEXT DEFAULT ''`);
-
-// 客户名唯一：已有同名主档时复用它，只有确实没有同名客户才新建（不再按行各建一条）
-const ensureCustomerId = (name, contact) => {
+function findOrCreateCustomer(name, contact = '') {
   const clean = normalizeCustomerName(name);
-  const exist = db.prepare(`SELECT id FROM customers WHERE name = ? ORDER BY createdAt ASC LIMIT 1`).get(clean);
-  if (exist) return exist.id;
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  if (!clean) throw new Error('客户名称不能为空');
+  const existing = db.prepare(`SELECT * FROM customers WHERE name = ? ORDER BY createdAt ASC LIMIT 1`).get(clean);
+  if (existing) {
+    if (!existing.contact && contact) db.prepare(`UPDATE customers SET contact = ? WHERE id = ?`).run(contact, existing.id);
+    return existing.id;
+  }
+  const id = uid();
   db.prepare(`INSERT INTO customers (id, name, contact) VALUES (?, ?, ?)`).run(id, clean, contact || '');
   return id;
-};
+}
 
-db.transaction(() => {
-  // 1) 为没有（或指向已丢失主档的）在约 / 跟进客户补建客户主档并回填 customerId
-  const contracts = db.prepare(`SELECT * FROM contracts`).all();
-  for (const c of contracts) {
-    let cid = c.customerId;
-    if (!cid || !db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(cid)) {
-      cid = ensureCustomerId(c.name, c.contact);
-      db.prepare(`UPDATE contracts SET customerId = ? WHERE id = ?`).run(cid, c.id);
-    }
-  }
-  const prospects = db.prepare(`SELECT * FROM prospects`).all();
-  for (const p of prospects) {
-    let cid;
-    // 续约跟进（contractId 关联在约客户）→ 与在约客户共用同一个客户主档
-    if (p.contractId) {
-      const c = db.prepare(`SELECT customerId FROM contracts WHERE id = ?`).get(p.contractId);
-      cid = c && c.customerId;
-    }
-    if (!cid && p.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(p.customerId)) cid = p.customerId;
-    if (!cid) cid = ensureCustomerId(p.name, p.contact);
-    db.prepare(`UPDATE prospects SET customerId = ? WHERE id = ?`).run(cid, p.id);
-  }
-
-  // 2) 以在约客户为准，统一客户主档名称 / 联系人，并同步镜像到所有同 customerId 的角色行
-  for (const c of contracts) {
-    if (!c.customerId) continue;
-    // 客户名唯一：该名称若已被别的客户主档占用则保持原样（避免撞上唯一索引 / 唯一性约束），其余字段照常镜像
-    const clash = db.prepare(`SELECT 1 FROM customers WHERE name = ? AND id != ?`).get(c.name, c.customerId);
-    if (!clash) db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(c.name, c.contact || '', c.customerId);
-    db.prepare(`UPDATE contracts SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
-    db.prepare(`UPDATE prospects SET name = ?, contact = ? WHERE customerId = ?`).run(c.name, c.contact || '', c.customerId);
-  }
-
-  // 3) 备注迁移：跟进 / 在约 的备注统一挂到客户主档（customerType='customer'），汇聚为同一条时间线
-  const contractNotes = db
-    .prepare(`SELECT n.id, c.customerId FROM notes n JOIN contracts c ON n.customerId = c.id WHERE n.customerType = 'contract'`)
-    .all();
-  for (const n of contractNotes) {
-    db.prepare(`UPDATE notes SET customerType = 'customer', customerId = ? WHERE id = ?`).run(n.customerId, n.id);
-  }
-  const prospectNotes = db
-    .prepare(`SELECT n.id, p.customerId FROM notes n JOIN prospects p ON n.customerId = p.id WHERE n.customerType = 'prospect'`)
-    .all();
-  for (const n of prospectNotes) {
-    db.prepare(`UPDATE notes SET customerType = 'customer', customerId = ? WHERE id = ?`).run(n.customerId, n.id);
-  }
-
-  // 4) 备注已进入时间线，清空源行的 note 字段，避免 migrateNotes 下次启动重复迁移
-  db.prepare(`UPDATE contracts SET note = '' WHERE customerId != '' AND note != ''`).run();
-  db.prepare(`UPDATE prospects SET note = '' WHERE customerId != '' AND note != ''`).run();
-})();
-
-// 迁移：客户名称唯一化 —— 同一名称 = 同一家公司，同名只允许一条客户主档。
-// 历史库里重复录入（新增跟进 / 新建续约时各建一条主档）或改名撞名都会产生同名主档，
-// 这里一次性收口：
-//  1) 名称规范化（去首尾空白、折叠连续空白），避免「阿里巴巴 」「阿里巴巴」被当成两家公司
-//  2) 同名主档合并：contracts / prospects 的 customerId、主档备注（customerType='customer'）统一指向保留的那条，其余删除
-//  3) 建立 customers.name 唯一索引，从数据库层面兜住后续重复写入
-export function mergeDuplicateCustomers(database = db) {
-  const rows = database.prepare(`SELECT id, name, contact, createdAt FROM customers ORDER BY createdAt ASC, id ASC`).all();
-  if (!rows.length) return 0;
-
+function mergeDuplicateCustomers() {
+  const rows = db.prepare(`SELECT id, name, contact, createdAt FROM customers ORDER BY createdAt ASC, id ASC`).all();
   const groups = new Map();
-  for (const r of rows) {
-    const key = normalizeCustomerName(r.name);
+  for (const row of rows) {
+    const key = normalizeCustomerName(row.name);
+    if (!key) continue;
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(r);
+    groups.get(key).push(row);
   }
-
-  // 该主档是否已挂在在约 / 跟进角色上（优先保留有角色引用的那条，改动最少）
-  const rolesOf = database.prepare(
-    `SELECT (SELECT COUNT(*) FROM contracts WHERE customerId = ?) + (SELECT COUNT(*) FROM prospects WHERE customerId = ?) AS c`
-  );
-
   let merged = 0;
-  database.transaction(() => {
-    for (const [name, list] of groups) {
-      const keep = list.find((r) => rolesOf.get(r.id, r.id).c > 0) || list[0];
-      for (const dup of list) {
-        if (dup.id === keep.id) continue;
-        database.prepare(`UPDATE contracts SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
-        database.prepare(`UPDATE prospects SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
-        database.prepare(`UPDATE notes SET customerId = ? WHERE customerType = 'customer' AND customerId = ?`).run(keep.id, dup.id);
-        database.prepare(`DELETE FROM customers WHERE id = ?`).run(dup.id);
-        merged += 1;
-      }
-      // 名称 / 联系人收口：名称统一为规范形态，联系人保留第一个非空值
-      const contact = keep.contact || list.map((r) => r.contact).find((v) => v) || '';
-      if (name !== keep.name || contact !== (keep.contact || '')) {
-        database.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(name, contact, keep.id);
-      }
+  for (const [name, list] of groups) {
+    const keep = list[0];
+    const contact = list.map((r) => r.contact).find(Boolean) || '';
+    db.prepare(`UPDATE customers SET name = ?, contact = ? WHERE id = ?`).run(name, contact, keep.id);
+    for (const dup of list.slice(1)) {
+      db.prepare(`UPDATE notes SET customerId = ? WHERE customerType = 'customer' AND customerId = ?`).run(keep.id, dup.id);
+      db.prepare(`UPDATE projects SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
+      db.prepare(`UPDATE deals SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
+      db.prepare(`UPDATE _migration_map SET customerId = ? WHERE customerId = ?`).run(keep.id, dup.id);
+      db.prepare(`DELETE FROM customers WHERE id = ?`).run(dup.id);
+      merged += 1;
     }
-  })();
-
-  if (merged > 0) console.log(`✅ 已合并 ${merged} 条同名客户主档（客户名唯一）`);
+  }
   return merged;
 }
 
 mergeDuplicateCustomers();
-
-// 唯一索引：客户名称在数据库层面不可重复（上面的合并已保证存量数据无同名，正常不会失败）
 try {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_name ON customers(name)`);
 } catch (err) {
-  console.warn('⚠️ 客户名称唯一索引创建失败（仍存在同名客户主档）：', err.message);
+  console.warn('⚠️ 客户名称唯一索引创建失败：', err.message);
 }
 
+function projectNameFor(customerName, category, status, expiryDate, sku) {
+  const kind = status === 'won' ? '已签' : category === 'renew' ? '续约' : '新签';
+  const tail = expiryDate ? ` ${String(expiryDate).slice(0, 7)}` : '';
+  return `${customerName} · ${sku || 'GitLab'} · ${kind}${tail}`;
+}
+
+function mapLegacyId(sourceType, sourceId) {
+  return db.prepare(`SELECT * FROM _migration_map WHERE sourceType = ? AND sourceId = ?`).get(sourceType, sourceId);
+}
+
+function insertMigratedProject({
+  id,
+  sourceType,
+  sourceId,
+  customerId,
+  name,
+  category,
+  status,
+  contact,
+  expectedAmount,
+  contractAmount,
+  skus,
+  lastFollowUp,
+  nextFollowUp,
+  startDate,
+  expiryDate,
+  sourceProjectId,
+  lostAt,
+  watchedAt,
+  closedAt,
+  createdAt,
+}) {
+  let projectId = id || uid();
+  if (db.prepare(`SELECT 1 FROM projects WHERE id = ?`).get(projectId)) projectId = uid();
+  db.prepare(`
+    INSERT INTO projects (
+      id, name, customerId, partnerId, category, status, contact,
+      expectedAmount, contractAmount, skus, lastFollowUp, nextFollowUp,
+      startDate, expiryDate, sourceProjectId, lostAt, watchedAt, createdAt, closedAt
+    ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    projectId,
+    name,
+    customerId,
+    category,
+    status,
+    contact || '',
+    Number(expectedAmount) || 0,
+    contractAmount == null || contractAmount === '' ? null : Number(contractAmount),
+    JSON.stringify(skus || []),
+    lastFollowUp || null,
+    nextFollowUp || null,
+    startDate || null,
+    expiryDate || null,
+    sourceProjectId || null,
+    lostAt || null,
+    watchedAt || null,
+    createdAt || new Date().toISOString().slice(0, 19).replace('T', ' '),
+    closedAt || null
+  );
+  db.prepare(`INSERT OR REPLACE INTO _migration_map (sourceType, sourceId, projectId, customerId) VALUES (?, ?, ?, ?)`).run(
+    sourceType,
+    sourceId,
+    projectId,
+    customerId
+  );
+  return projectId;
+}
+
+function migrateLegacyTables() {
+  const hasContracts = tableExists('contracts');
+  const hasProspects = tableExists('prospects');
+  if (!hasContracts && !hasProspects) return { contracts: 0, prospects: 0 };
+
+  let contracts = [];
+  let prospects = [];
+  if (hasContracts) {
+    try {
+      contracts = db.prepare(`SELECT * FROM contracts ORDER BY createdAt ASC, id ASC`).all();
+    } catch (err) {
+      console.warn('⚠️ 读取旧 contracts 失败，跳过该表：', err.message);
+    }
+  }
+  if (hasProspects) {
+    try {
+      prospects = db.prepare(`SELECT * FROM prospects ORDER BY createdAt ASC, id ASC`).all();
+    } catch (err) {
+      console.warn('⚠️ 读取旧 prospects 失败，跳过该表：', err.message);
+    }
+  }
+
+  for (const c of contracts) {
+    if (mapLegacyId('contract', c.id)) continue;
+    const customerId = c.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(c.customerId)
+      ? c.customerId
+      : findOrCreateCustomer(c.name, c.contact);
+    const skus = parseSkus(c);
+    const wasLost = c.status === 'lost';
+    const status = wasLost ? 'lost' : 'won';
+    const category = wasLost ? 'renew' : null;
+    insertMigratedProject({
+      id: c.id,
+      sourceType: 'contract',
+      sourceId: c.id,
+      customerId,
+      name: projectNameFor(c.name, category, wasLost ? 'won' : status, c.expiryDate, skus[0]),
+      category,
+      status,
+      contact: c.contact,
+      expectedAmount: c.contractAmount,
+      contractAmount: c.contractAmount,
+      skus,
+      startDate: c.startDate,
+      expiryDate: c.expiryDate,
+      lostAt: c.lostAt,
+      closedAt: wasLost ? c.lostAt : null,
+      createdAt: c.createdAt,
+    });
+  }
+
+  for (const p of prospects) {
+    if (mapLegacyId('prospect', p.id)) continue;
+    const customerId = p.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(p.customerId)
+      ? p.customerId
+      : findOrCreateCustomer(p.name, p.contact);
+    const skus = parseSkus(p);
+    const category = p.category === 'renew' ? 'renew' : 'new';
+    const status = p.status === 'lost' ? 'lost' : p.status === 'watching' ? 'watching' : 'active';
+    const source = p.contractId ? mapLegacyId('contract', p.contractId) : null;
+    insertMigratedProject({
+      id: p.id,
+      sourceType: 'prospect',
+      sourceId: p.id,
+      customerId,
+      name: projectNameFor(p.name, category, status, p.expiryDate, skus[0]),
+      category,
+      status,
+      contact: p.contact,
+      expectedAmount: p.expectedAmount,
+      contractAmount: null,
+      skus,
+      lastFollowUp: p.lastFollowUp,
+      nextFollowUp: p.nextFollowUp,
+      expiryDate: p.expiryDate,
+      sourceProjectId: source?.projectId,
+      lostAt: p.lostAt,
+      watchedAt: p.watchedAt,
+      closedAt: status === 'lost' ? p.lostAt : null,
+      createdAt: p.createdAt,
+    });
+  }
+
+  if (hasContracts || hasProspects) {
+    const roleNotes = db
+      .prepare(`SELECT id, customerType, customerId FROM notes WHERE customerType IN ('contract', 'prospect')`)
+      .all();
+    for (const note of roleNotes) {
+      const mapped = mapLegacyId(note.customerType, note.customerId);
+      if (mapped?.customerId) {
+        db.prepare(`UPDATE notes SET customerType = 'customer', customerId = ?, projectId = NULL WHERE id = ?`).run(
+          mapped.customerId,
+          note.id
+        );
+      }
+    }
+  }
+
+  const deals = db.prepare(`SELECT id, customer, customerId FROM deals WHERE projectId IS NULL`).all();
+  for (const deal of deals) {
+    if (deal.customerId && db.prepare(`SELECT 1 FROM customers WHERE id = ?`).get(deal.customerId)) continue;
+    const matches = db.prepare(`SELECT id FROM customers WHERE name = ?`).all(normalizeCustomerName(deal.customer));
+    if (matches.length === 1) db.prepare(`UPDATE deals SET customerId = ? WHERE id = ?`).run(matches[0].id, deal.id);
+  }
+
+  for (const [source, target] of [
+    ['contracts', 'legacy_contracts'],
+    ['prospects', 'legacy_prospects'],
+  ]) {
+    if (!tableExists(source)) continue;
+    if (!tableExists(target)) db.exec(`ALTER TABLE ${source} RENAME TO ${target}`);
+  }
+
+  return { contracts: contracts.length, prospects: prospects.length };
+}
+
+const migrated = db.prepare(`SELECT value FROM schema_meta WHERE key = 'projects_migrated_v1'`).get();
+if (!migrated) {
+  const run = db.transaction(() => {
+    const summary = migrateLegacyTables();
+    db.prepare(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('projects_migrated_v1', ?)`).run(
+      JSON.stringify({ ...summary, at: new Date().toISOString() })
+    );
+    return summary;
+  });
+  const summary = run();
+  if (summary.contracts || summary.prospects) {
+    console.log(`✅ 已迁移旧业务数据：合同 ${summary.contracts} 条、跟进 ${summary.prospects} 条 → projects`);
+  }
+}

@@ -211,11 +211,13 @@ button, input, select, textarea { font-family: inherit; }
 .workspace-grid.grid-wide { grid-template-columns: minmax(0, 1fr); --follow-table-max: max(320px, calc(100vh - 360px)); }
 
 /* 跟进面板内部（New / Renew） */
-.follow-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s3); flex-wrap: wrap; }
-.follow-head-main { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
-.follow-head-ops { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
-.follow-title { display: flex; align-items: center; gap: var(--s3); }
-.follow-title h2 { font-size: var(--fs-lg); font-weight: 600; }
+/* New / Renew 头部固定三段：①标题 + NEW/RENEW 标签 + 项目数 ②工具栏 + 主按钮 ③说明 + 统计胶囊。
+   三段都不允许自动换行，两块面板的上边距与行高因此完全一致，表头才会对齐 */
+.follow-head { display: flex; flex-direction: column; gap: var(--s3); margin-bottom: var(--s4); }
+.follow-head-top { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+.follow-head-ops { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.follow-title { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+.follow-title h2 { font-size: var(--fs-lg); font-weight: 600; white-space: nowrap; }
 /* New / Renew 标签刻意保持同一中性样式：两者是同级分类（不是状态、也不是优先级），
    区分交给标题文案与面板位置；层级由网格与留白承担，不要再按变体着色。
    这里一次性写全（含与 badge / pill / plan-tag 共用的方角基础样式，见第 7 节），
@@ -225,10 +227,14 @@ button, input, select, textarea { font-family: inherit; }
   font-size: var(--fs-2xs); font-weight: 500; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
   background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); color: var(--fg-muted);
 }
-.follow-count { font-size: var(--fs-xs); color: var(--fg-muted); }
-.follow-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); flex-wrap: wrap; }
-.follow-desc { font-size: var(--fs-xs); color: var(--fg-muted); }
-.follow-meta .stat-pills { margin: 0; }
+.follow-count { font-size: var(--fs-xs); color: var(--fg-muted); white-space: nowrap; }
+/* 说明 + 统计胶囊：说明单行省略（title 兜底），胶囊不换行不压缩，两侧高度恒定 */
+.follow-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.follow-desc {
+  flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--fg-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.follow-meta .stat-pills { margin: 0; flex-shrink: 0; }
 
 /* Lost 客户页：两块归档面板（New Lost / Renew Lost）用中性左侧竖条区分，
    状态色只留给「已流失 N 家」胶囊，避免把归档误读成待处理告警 */
@@ -446,6 +452,10 @@ button, input, select, textarea { font-family: inherit; }
 /* 金额：14px / 500 / tabular / 右对齐 —— 必须小于客户名字号（16px） */
 .table td.num.strong { font-size: var(--fs-md); }
 .table .ops { text-align: right; white-space: nowrap; }
+/* 操作列只占内容宽度（width:1% + nowrap 的经典收缩写法），
+   把省下的空间全给项目列 —— 并排双栏时不会因为多一个按钮把「操作」挤出可视区 */
+.follow-table-wrap .table th.ops,
+.follow-table-wrap .table td.ops { width: 1%; }
 /* 客户名在表格里恒为单行（过长则省略号，完整名称在 title 里），保证行高节奏稳定；
    字号/字重是行内最强层级：16px / 600，比任何属性值至少大 2px、重 100 */
 .table td .link-name {
@@ -795,4 +805,49 @@ button, input, select, textarea { font-family: inherit; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* ---------- 18. 项目 / 客户详情 ---------- */
+.status-hint {
+  display: flex; align-items: flex-start; gap: var(--s2);
+  margin: var(--s5) var(--s5) 0;
+  padding: var(--s3) var(--s4);
+  background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--info);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs); line-height: var(--lh-dense); color: var(--fg-muted);
+}
+.status-hint svg { flex-shrink: 0; margin-top: 1px; color: var(--info); }
+.status-hint.won { border-left-color: var(--ok); }
+.status-hint.won svg { color: var(--ok); }
+.status-hint.lost { border-left-color: var(--danger); }
+.status-hint.lost svg { color: var(--danger); }
+.status-hint.watching { border-left-color: var(--fg-muted); }
+.status-hint.watching svg { color: var(--fg-muted); }
+.related-projects-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+  margin: var(--s5) 0 var(--s2);
+  padding-top: var(--s4); border-top: 1px solid var(--line);
+}
+.related-projects-head h5 { font-size: var(--fs-xs); font-weight: 500; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+.related-project-list { display: flex; flex-direction: column; }
+.related-project-item {
+  display: flex; flex-direction: column; gap: var(--s1);
+  width: 100%; padding: var(--s3) 0;
+  border: none; border-bottom: 1px solid var(--line); background: transparent;
+  text-align: left; cursor: pointer; color: var(--fg);
+}
+.related-project-item:last-child { border-bottom: none; }
+.related-project-item:hover .related-project-name { color: var(--fg-muted); }
+.related-project-name { font-size: var(--fs-sm); font-weight: 500; word-break: break-word; }
+.related-project-meta { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; font-size: var(--fs-2xs); color: var(--fg-muted); }
+.note-project-tag {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  margin-bottom: var(--s1); padding: 1px var(--s2);
+  border: 1px solid var(--line); border-radius: var(--r-xs);
+  font-size: var(--fs-2xs); color: var(--fg-muted);
+}
+.form-note {
+  grid-column: 1 / -1; padding: var(--s3) var(--s4);
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+  font-size: var(--fs-xs); line-height: var(--lh-dense); color: var(--fg-muted);
 }

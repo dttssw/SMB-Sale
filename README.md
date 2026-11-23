@@ -1,24 +1,57 @@
 # SMB 销售工作台
 
-面向中小企业销售团队的一体化销售工作台，围绕**日常记录 + 客户跟进**运转，弱化金额展示与在约客户占用，突出**临期到期提醒**。所有数据保存在本地 SQLite，前端为 React + Vite，后端为轻量 Express REST API，单进程即可部署。
+面向中小企业销售团队的一体化销售工作台，围绕**日常记录 + 项目推进**运转。核心模型是 **客户（customers）** 与 **项目（projects）** 分离：一家客户可以并行推进多个项目，一个项目只归属一家最终客户、可选关联一个合作伙伴。所有数据保存在本地 SQLite，前端 React + Vite，后端轻量 Express REST API，单进程即可部署。
+
+## 数据模型
+
+| 表 | 作用 | 关键字段 |
+| --- | --- | --- |
+| `customers` | 客户主档，名称唯一（规范化后同名即同一家） | `id` `name` `contact` |
+| `partners` | 合作伙伴主档（渠道商 / 代理商），只有名称，联系人写在备注里 | `id` `name` |
+| `projects` | **唯一的业务推进表**，新签 / 续约、跟进 / 观察 / 已签 / 流失都在这里 | `customerId`（必填）`partnerId`（可选）`category` `status` `skus` `expectedAmount` `contractAmount` `startDate` `expiryDate` `sourceProjectId` |
+| `notes` | 备注时间线，客户级（`projectId` 为空）与项目级（`projectId` 有值）两层 | `customerType` `customerId` `projectId` `content` |
+| `deals` | 成交记录，一个已签项目最多一条 | `projectId`（唯一）`customerId` `amount` `date` `type` |
+| `worklogs` | 每日工作记录 | `content` `date` |
+| `materials` | 材料库元数据（文件在 `server/uploads/`） | `storedName` `mime` `size` |
+
+- `status`：`active`（项目跟进）/ `watching`（长期观察）/ `won`（已签项目）/ `lost`（Lost 项目）。
+- `category`：`new`（新签）/ `renew`（续约）/ `NULL`（历史迁移过来的已签合同，不再产生新值）。
+- `sourceProjectId`：续约项目指回被续约的原已签项目，用于串联历史。
+- 外键：`projects.customerId` 为 `ON DELETE RESTRICT`（有项目的客户不能删，接口返回 409）；`projects.partnerId` 为 `ON DELETE SET NULL`（删合作伙伴只解绑，不动项目）。
+- 旧库首次启动自动迁移：`contracts` → `won` 项目（旧 lost 合同转为 `lost` 的 `renew` 项目）、`prospects` → `active` / `watching` / `lost` 项目并回填 `sourceProjectId`，旧表重命名为 `legacy_contracts` / `legacy_prospects` 留档，`schema_meta.projects_migrated_v1` 保证只跑一次。
 
 ## 核心模块
 
-1. **今日工作记录** — 记录每天做了哪些事，按天分组（今天 / 昨天 / 具体日期）形成时间线；默认仅展示**本周**（周一~周日），可在「本周 / 全部」间切换查阅任意历史记录；支持快速「记一笔」、显示当天条数、逐条删除。
-2. **客户跟进** — 跟进管道（初次沟通 → 需求确认 → 方案演示 → 商务谈判 → 待签约），按下次跟进时间排序，标记**逾期未跟进**与**今日需跟进**的客户，是日常工作主入口；每位客户都带 **SKU** 字段（支持多条，New / Renew 均可在详情中查看）。
-3. **长期观察** — 「正在跟进的新客户」里每行都有「长期观察」按钮：一键把当前客户转为长期观察，**不再设置定时跟进时间**；观察中的客户收在左侧「长期观察」页，客户档案、SKU 与备注时间线保持原样，随时可「恢复跟进」。
-4. **Lost 客户** — 不论 New 还是 Renew，客户详情里都能「标记为 Lost」；流失客户单独收在左侧「Lost 客户」页，分 **New 流失** 与 **Renew 流失** 两块。lost 只是状态位：客户档案、SKU、金额与备注时间线保持放进 lost 前的样子，客户主档仍只有一条，随时可「恢复为进行中」。
-5. **临期在约提醒** — 距到期 ≤ `RENEW_WINDOW_DAYS`（默认 60 天，约两个月，见 `src/data/constants.js`）或已逾期的在约客户在顶部醒目提醒，可直接查看 / 续约；无临期时显示「在约客户状态稳定」，不打扰。
-6. **在约客户** — 查看在约客户的订阅到期清单（SKU、金额、联系人），支持查看详情与续约。
-7. **成交金额（次要）** — 做成「左数字概览 + 右最近成交」两栏：左侧本月 / 累计 / 平均单笔，右侧最近成交按日期倒序（与其它列表共用密度 / 每页 / 分页）；仍是回顾性质，不做主视觉。
-8. **合作伙伴** — 登记渠道商 / 代理商等合作伙伴，只保留名称；一个合作伙伴可能有多个联系人，联系人逐条记在备注时间线里。
-9. **材料库** — 上传产品方案、报价单、合同模板等资料，支持批量上传、在线预览、下载与删除。
+1. **总览** — 今日需跟进、成交概览等关键数字，配临期提醒（只统计已签项目）。
+2. **今日工作** — 按天分组（今天 / 昨天 / 具体日期）形成时间线，默认只展示本周，可切「全部」；支持快速「记一笔」、显示当天条数、逐条删除。
+3. **项目跟进** — 主入口。分 **New（新签）/ Renew（续约）** 两个视图，按下次跟进时间排序，标出**逾期未跟进**与**今日需跟进**；同一客户可以同时有多条在跟进项目。
+4. **已签项目** — 赢单项目清单，展示成交金额、订阅起止、SKU；`RENEW_WINDOW_DAYS`（默认 60 天）内临期或已逾期的置顶提醒，可一键「创建续约」。
+5. **客户名单** — 只维护客户主档：联系人、进行中项目数、已签项目数；点开客户能看到它的全部项目（含已签 / Lost）与客户级备注汇总。
+6. **长期观察** — 暂时不需要定时跟进但要留意的项目。转入时清空下次跟进时间，不再进「逾期 / 今日需跟进」；随时可恢复回项目跟进。
+7. **Lost 项目** — 未赢单项目归档，按流失时间倒序。lost 只影响这一个项目，同客户的其他项目完全不受影响，可随时恢复。
+8. **合作伙伴** — 渠道商 / 代理商主档，只保留名称（多个联系人写进备注时间线），列表带「关联项目」列可看它参与的项目。
+9. **成交金额** — 左侧本月 / 累计 / 平均单笔概览，右侧最近成交（项目 / 最终客户），与 `deals` 对齐。
+10. **材料库** — 上传产品方案、报价单、合同模板等，支持批量上传、在线预览、下载、删除。
+
+## 状态流转
+
+```
+active ──赢单（成交金额 + 订阅起止）──> won ──创建续约──> 新的 active(renew) 项目
+  │                                                    sourceProjectId 指向原项目
+  ├──长期观察──> watching ──恢复──> active
+  └──标记 Lost──> lost     ──恢复──> active
+```
+
+- `active` 可以转 `won` / `watching` / `lost`；`watching` / `lost` 可以恢复到 `active`。
+- `won` 是终态：不能退回 `active`，也不能直接标 `lost`（要重谈就新建项目）。
+- 赢单时自动写一条 `deals`（`type` 按 `category` 落 `new` / `renewal`），重复赢单直接返回已有成交，不会重复计数。
+- 续约是**独立的新项目**：原已签项目保留全部历史（成交金额、订阅周期），续约项目记 `sourceProjectId`。续约窗口只用于提醒和自动补建，不会删项目。
 
 ## 技术架构
 
-- **前端**：React + Vite，通过 `/api` 与后端通信（开发模式下由 Vite 代理转发到 3001 端口）。
+- **前端**：React + Vite，通过 `/api` 与后端通信（开发模式下 Vite 代理转发到 3001 端口）。
 - **后端**：Node.js + Express 轻量 REST API。
-- **数据库**：SQLite（`better-sqlite3`），文件型轻量数据库，位于 `server/data/smb.db`（首次启动时自动生成，**不预置任何演示数据**）。
+- **数据库**：SQLite（`better-sqlite3`），文件型数据库，位于 `server/data/smb.db`（首次启动自动生成，不预置演示数据）。环境变量 `SMB_DB_FILE` 可指向其他库文件（验证脚本、临时环境用）。
 
 ## 快速开始
 
@@ -27,124 +60,129 @@ npm install
 npm run dev     # 同时启动后端（3001）与前端开发服务器（5173）
 ```
 
-也可分开启动：
+分开启动：
 
 ```bash
-npm run server  # 仅启动后端 API（端口 3001）
-npm run web     # 仅启动前端（端口 5173）
+npm run server  # 仅后端 API（3001）
+npm run web     # 仅前端（5173）
 ```
 
-生产构建（构建产物由后端一并托管，单进程运行）：
+生产构建（产物由后端一并托管，单进程运行）：
 
 ```bash
 npm run build
-npm start       # 生产模式运行于端口 3001
+npm start       # 生产模式运行于 3001
+```
+
+迁移与接口验收：
+
+```bash
+node server/verify-projects.js
+# 自建临时旧库 → 跑迁移 → 起服务 → 验证多项目、赢单隔离、续约防重、备注隔离、状态流转、重启幂等
 ```
 
 ## 功能说明
 
-- 所有数据存储在 SQLite 数据库中。在约客户由跟进客户**转为在约**或直接**续约**产生（不再提供单独的新增入口）；跟进客户与成交记录可新增 / 编辑 / 删除，改动实时生效。
-- **今日工作记录**：顶部输入框直接「记一笔」，仅需内容，系统按当天自动归档；列表默认仅展示**本周**（周一~周日）内容，更早历史自动隐藏并提示「点击查看全部」，在「本周 / 全部」视图间切换即可查阅任意历史记录；按天分组（今天 / 昨天 / 具体日期），每组按时间倒序展示，支持逐条删除。
-- 跟进中的新客户可一键**转为在约客户**：在客户详情弹窗的「⋯ 更多」菜单点击「转为在约」，表单自动带入客户名称、联系人、预计金额（订阅默认一年），保存后该客户移入在约列表并从跟进列表中移除（由 `POST /api/prospects/:id/convert` 在一个事务里完成「移出跟进 + 建立在约」，不会出现「合同已建、跟进还在」的中间态，失败自动回滚）。
-- **客户详情在「续约跟进 / 在约客户」完全一致**：续约跟进（Renew）与在约客户本来就是同一份档案，点击续约跟进列表里的客户名会直接打开它关联的在约记录——字段（SKU / 合同金额 / 订阅起止时间）、「⋯ 更多」里的**续约**入口与备注时间线，都与「在约客户」页面点开的详情完全一致。
-- **流失（Lost）——New / Renew 都能标记，单独归档**：在客户详情弹窗「⋯ 更多 → 标记为 Lost」即可把客户标记为流失（数据库里是 `contracts` / `prospects` 的 `status='lost'` + `lostAt`，只是状态位）：
-  - 流失客户不再出现在「客户跟进 / 续约跟进 / 在约客户」，也不计入「今日需跟进」与临期角标，而是收进左侧**「Lost 客户」**页：**New 流失**（跟进流失）与**Renew 流失**（在约 / Renew 流失）两块，按流失时间倒序，密度 / 每页 / 分页与其它列表一致；
-  - **客户档案与放进 lost 前完全一致**：客户主档（`customers`）、SKU、金额、订阅日期与备注时间线都不复制、不清空，只是多了一个状态位；同一客户在 `customers` 里始终只有一条记录（客户名唯一规则不变）；
-  - 在约客户被标记 lost 时，它对应的续约跟进会**一并归档**（Renew Lost 统一按在约记录列出），同一客户不会在 Lost 页出现两条；lost 的客户也不会被续约同步重新带出或补建在约记录；
-  - **恢复**：Lost 客户详情里「⋯ 更多 → 恢复为进行中」即可回到原板块；恢复在约客户会重新按续约窗口带出续约跟进。lost 记录不阻挡同一客户重新进入跟进 / 在约流程，但同一客户在同一板块「进行中」的记录仍最多一条（恢复时若已有进行中的记录会返回 409）；
-  - 接口：`POST /api/{contracts|prospects}/:id/lost` 与 `POST /api/{contracts|prospects}/:id/restore`。
-- **长期观察（watching）——不需要定时跟进的客户单独归档**：「客户跟进 → 正在跟进的新客户」每行都有一个「**长期观察**」按钮（客户详情「⋯ 更多 → 转为长期观察」同样可以），点击后：
-  - 只是给这条跟进记录加上状态位（`prospects.status='watching'` + `watchedAt`），**不新建客户、不复制档案**——`customers` 里仍然只有这一条主档、跟进板块里也仍然只有这一条角色行，符合「一个客户只有一张表」；
-  - **不再设置定时跟进**：转入时清空 `nextFollowUp`，之后即使继续加备注（备注会更新 `lastFollowUp`）也不会再写回下次跟进时间，因此不会出现在「逾期未跟进 / 今日需跟进」与左侧角标里；
-  - 客户从「客户跟进」移到左侧**「长期观察」**页（阶段、SKU、预估金额、上次跟进、转入观察时间；密度 / 每页 / 分页与其它列表一致），客户档案、SKU 与备注时间线原样保留；
-  - **恢复跟进**：长期观察页行内「恢复跟进」或详情「⋯ 更多 → 恢复跟进」即可回到「客户跟进」，服务端按最后一条备注重新安排下次跟进（无备注时留空，可自行设置）；
-  - 长期观察与 Lost 互斥：标记 Lost 会清空 `watchedAt`，Lost 客户需先恢复才能转长期观察；同一客户已在长期观察时再新增跟进会返回 409 并提示去「恢复跟进」；
-  - 接口：`POST /api/prospects/:id/watch`（恢复复用 `POST /api/prospects/:id/restore`）。
-- **客户名唯一（同一名称 = 同一家公司）**：客户主档以「名称」为唯一身份标识——名称先做规范化（去首尾空白、连续空白折叠为一个空格），同名只保留一条 `customers` 记录，跟进 / 在约 / 续约跟进共用同一份名称、联系人与备注时间线；客户名唯一由「索引 `idx_customers_name` + 写入时复用 / 409 拒绝」双重保证：
-  - 新增或改名时命中已有名称 → 直接**复用**该主档（不再新建第二条档案），改名撞名则返回 **409** 并提示「客户名称已存在（客户名唯一）」；
-  - 一家客户在「客户跟进 / 在约 / 续约跟进」里各最多出现一次：已在跟进列表的客户直接新建在约会提示改用「转为在约」，已是在约客户再建跟进会被拒绝，避免同一家公司在多个板块重复出现（已标记 lost 的归档记录不计入，见下方「流失（Lost）」）；
-  - 服务启动时会自动**合并历史重复主档**（把 `contracts` / `prospects` 的 `customerId` 与主档备注统一指向保留的那条，优先保留已挂在角色上的主档），并建立 `customers.name` 唯一索引，从数据库层面兜住后续重复写入。
-- **续约跟进（Renew）——「在约客户」与「续约跟进」的自动判定**：续约客户在新建 / 同步时都会做一次**是否在约**的判定，判定顺序为 `contractId` → `customerId` → 客户名（规范化后精确匹配）：
-  - **在约** → 表单里的 SKU 列表 / 金额 / 续约到期时间同步回该客户的在约记录（名称、联系人以共享的客户主档为准），客户归入**在约客户**板块；
-  - **不在约**（历史手动新建的续约客户）→ 用表单信息**自动补建一条在约记录**（SKU 列表沿用表单、缺省第一个，金额取预计金额、开始时间 = 到期时间前一年），客户随即出现在**在约客户**板块；
-  - **续约窗口收口**：只有距到期 ≤ `RENEW_WINDOW_DAYS` 天（默认 60 天 ≈ 两个月）的才留在**续约跟进**，距到期更久的自动退出续约跟进（**客户仍留在在约客户板块**，共享的备注时间线不受影响），临期时会自动带出；
-  - 服务启动时会对续约跟进里的所有客户执行一次同样的**在约判定**（历史数据批量收口，日志打印补建 / 退出条数），`POST /api/sync/renewals` 也可手动触发。
-- **合作伙伴板块**：独立于销售管线的合作伙伴登记表（渠道商 / 代理商等），**只保留名称**（不再有单一「联系人」字段——一个合作伙伴可能有多个联系人，逐条写在备注时间线里），**不包含金额、跟进时间、订阅签约等字段**；可新建 / 编辑 / 删除，并在详情弹窗内为其**提交备注**，备注按系统时间归档到时间线（支持逐条删除）。历史数据里的 `partners.contact` 会在服务启动时自动迁移成一条「联系人：xxx」备注（已存在同名备注则跳过），确认写入后再移除该列，因此旧联系人信息不会丢失。
-- **列表密度与每页条数（客户跟进 / 在约客户 / 合作伙伴 / 成交金额 一致）**：四个列表**默认使用「舒适」布局**（行距更大、更好读），可一键切「紧凑」把一屏塞进更多行；「每页」默认**「自动」**——按当前窗口大小算出这个板块**能完整显示的最多行数**（选择器旁实时显示「自适应 N 条」），窗口越大一屏看到的条数越多、窗口变小自动收缩，列表内部滚动 + 表头吸顶，不会出现无谓的整页滚动；也可手动指定 8 / 15 条或「全部」。
-- **客户详情弹窗**：点击列表中的客户名称或「详情」按钮即可查看客户全部信息（含完整 **SKU** 列表，在约 / 客户跟进 / 续约跟进一致）。弹窗加宽为 1040px 的**两栏工作区**——左栏「客户档案」固定在最左侧（客户名 + 状态标签，下面是逐行对齐的字段：联系人、SKU、金额、跟进 / 订阅日期），右栏「备注记录」占满其余宽度（填写区固定在顶部，时间线在下方独立滚动，天数分组标题吸顶）；两栏各自滚动，翻历史备注时档案不会滚走，备注正文用 14px / 1.6 行高便于阅读。单屏宽度不足时自动收成上下单栏。编辑 / 删除 / 续约 / 转为在约 / 长期观察 / 标记为 Lost / 恢复为进行中等操作收进左栏标题行右侧的「⋯ 更多」二级菜单，无需每次点编辑才能看到。
-- **多 SKU**：每位客户的 SKU **默认 1 条**，表单里可点「添加 SKU」继续增加（多于一条时任意一条可移除，至少保留一条；第一条为主 SKU）；详情弹窗以标签完整展示全部 SKU，在约客户列表显示主 SKU +「+N」。数据库 `plan` 保留第一条作为主 SKU，完整列表存于 `skus`（JSON 数组文本）；续约跟进、转为在约、续约窗口自动带出时会同步整份 SKU 列表。
-- **备注时间线**：每个客户 / 合作伙伴可维护多条备注，在详情弹窗内填写并「提交备注」，系统按当前时间归档并按时间倒序罗列，支持逐条删除；旧版单条备注已自动迁移到时间线。
-- **备注保留与归档**：`notes` 表只保留最近 1 个月的备注（让 `smb.db` 体积可控）。更早的备注会在服务启动或读取备注列表时自动**追加归档**到 `server/data/archive/notes-archive.jsonl` —— JSONL 格式，一行一条，字段为原 `id` / `customerType` / `customerId` / `content` / `createdAt` 及归档时间 `archivedAt`；**先确认归档落盘成功，再从主表移除**，因此历史沟通记录不会丢失。归档文件不会被自动删除，可用 `npm run notes:export` 导出成 JSON 使用（`npm run notes:export -- <customerId>` 只导出某个客户）。
-- 客户统一使用 **SKU** 标识套餐，可选：专业版、旗舰版、BE版、PE版、SaaS专业版、SaaS旗舰版、Duo、Duo Credit、PS人天服务（数据库字段 `plan` 保存主 SKU，`skus` 保存完整列表；界面统一展示为「SKU」；在约客户、客户跟进（New）、续约跟进（Renew）都有该字段且可配置多条，详情里始终可见，历史记录为空时显示「—」）。
-- 在约客户订阅默认一年：选定**订阅开始时间**后，到期时间自动设为一年后（前一天）；反向，选定**订阅到期时间**后，开始时间自动设为一年前（加一天），双向自动联动。
-- 日期选择器支持**年 / 月 / 日下拉直接选年份**，无需在日历中逐月翻到其他年份；更改年月时自动收敛非法日期（如 1月31日 改到 2月 → 自动变为月末），可选日期可一键清空。
-- 材料库文件存储在 `server/uploads/`，文件元数据存于 SQLite，可批量上传、预览、下载与删除；可执行 / 脚本类型（exe、bat、sh、js 等）禁止上传；html / svg 等含脚本风险的类型通过**沙箱 iframe（`sandbox=""`，同时禁用脚本与同源，阻断 XSS）隔离预览**，PDF / 图片则直接内联预览。
-- 业务常量（SKU、跟进阶段、续约提醒窗口 `RENEW_WINDOW_DAYS`）见 `src/data/constants.js`（修改续约提醒窗口需同步 `server/index.js` 中的同名常量，后端不能直接 import 前端模块）。
+- **一个客户多个项目**：客户只在「客户名单」维护一份，项目在「项目跟进 / 已签项目 / 长期观察 / Lost 项目」里按状态流转。同一客户同时推进多个项目、其中一个已签约而另一个还在谈，是默认支持的场景。
+- **一个项目必须且只有一家最终客户**：`projects.customerId` 非空 + 外键约束；新增项目时可从下拉选已有客户，也可当场新建客户（名称规范化后同名复用，不产生重复主档）。合作伙伴可选，可空。
+- **双层备注**：客户级备注（`projectId` 为空）是这家公司的沟通汇总，项目级备注挂在具体项目上。客户详情看到全部备注（带项目名标签），项目详情只看本项目备注。项目备注会刷新**该项目**的跟进时间，不影响同客户其他项目；客户级备注只归档，不改任何项目的跟进时间。
+- **跟进时间**：`lastFollowUp` / `nextFollowUp` 存在项目上。项目跟进列表按 `nextFollowUp` 排序，逾期（早于今天）与今日需跟进单独高亮；长期观察与 Lost 项目不参与提醒。
+- **赢单**：`POST /api/projects/:id/win` 在一个事务里写项目状态 + 成交金额 + 订阅起止 + `deals`，任一校验失败整体回滚。已签项目必须有成交金额与订阅起止时间。
+- **续约**：已签项目在 `RENEW_WINDOW_DAYS` 内（或已逾期）时提醒，也可随时手动续约；生成的续约项目 `category='renew'`、`status='active'`、`sourceProjectId` 指向原项目。同一已签项目已有进行中（`active` / `watching`）的续约项目时，手动续约返回 409；`POST /api/sync/renewals` 则是幂等补建（已有就跳过，不会重复创建）。
+- **客户名唯一**：名称先规范化（去首尾空白、连续空白折叠），`idx_customers_name` 唯一索引 + 写入时复用 / 409 双重保证；服务启动会合并历史重复主档（备注、项目、成交一并改指向保留的那条）。
+- **删除保护**：客户名下还有项目 → 409；项目已有成交记录 → 409（要删先删成交）；删项目会连带删它的项目级备注，并把指向它的续约项目 `sourceProjectId` 置空；删合作伙伴只把项目的 `partnerId` 置空，项目本身不受影响。
+- **多 SKU**：每个项目默认 1 条 SKU，可继续添加（至少保留一条，第一条为主 SKU），完整列表存 `skus`（JSON 数组文本）。选项见 `src/data/constants.js` 的 `SKUS`。
+- **订阅周期联动**：选订阅开始时间自动算一年后到期（前一天），选到期时间反推开始时间，双向联动；日期选择器支持直接下拉选年 / 月，改年月自动收敛非法日期（1月31日 → 2月变月末）。
+- **列表密度与每页条数**：项目跟进 / 已签项目 / 长期观察 / Lost / 客户名单 / 合作伙伴共用同一套工具栏，默认「舒适」密度，每页默认「自动」（按窗口高度铺满一屏，选择器旁显示「自适应 N 条」），也可手选 8 / 15 / 全部。
+- **备注归档**：`notes` 只保留最近 1 个月，更早的追加到 `server/data/archive/notes-archive.jsonl`（JSONL，含原字段 + `archivedAt`），**先确认落盘再从主表删除**。导出用 `npm run notes:export`：
+  - `npm run notes:export -- --customer=<customerId>` 该客户的全部备注（含各项目）
+  - `npm run notes:export -- --project=<projectId>` 只导某个项目
+  - `npm run notes:export -- --since=2026-11-01` 按时间过滤
+  - 导出结果带 `projectId` / `projectName` / `projectStatus` / `customerName` / `ownerCustomerId`，客户级备注 `projectId` 为空。
+- **材料库**：文件存 `server/uploads/`，元数据存 SQLite；可执行 / 脚本类型（exe、bat、sh、js 等）禁止上传；HTML / SVG 通过沙箱 iframe（`sandbox=""`）隔离预览，PDF / 图片内联预览。
+- **常量**：SKU 列表、`PROJECT_STATUS` 文案、`RENEW_WINDOW_DAYS` 见 `src/data/constants.js`；改续约窗口需同步 `server/index.js` 里的同名常量（后端不能直接 import 前端模块）。
 
 ## API 一览
 
+### 项目
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/contracts` / `/api/prospects` / `/api/deals` / `/api/partners` | 列表 |
-| POST | `/api/contracts` / `/api/prospects` / `/api/deals` / `/api/partners` | 新增（在约 / 跟进按「客户名唯一」复用或新建客户主档；客户名或板块冲突返回 409） |
-| PUT | `/api/contracts/:id` / `/api/prospects/:id` / `/api/deals/:id` / `/api/partners/:id` | 更新（支持部分字段；改名撞名返回 409） |
-| POST | `/api/prospects/:id/convert` | **转为在约**：一个事务内「移出跟进 + 建立在约」，复用同一客户主档（body 为在约字段：`name` `plan` `skus` `contact` `contractAmount` `startDate` `expiryDate`；`skus` 为 SKU 列表数组，`plan` 缺省取第一条） |
-| POST | `/api/contracts/:id/lost` / `/api/prospects/:id/lost` | **标记 lost**：只把角色行改为 `status='lost'` 并记录 `lostAt`，客户主档、SKU、金额与备注时间线原样保留（在约客户流失会连带归档它的续约跟进） |
-| POST | `/api/contracts/:id/restore` / `/api/prospects/:id/restore` | **恢复为进行中 / 恢复跟进**：清空 `lostAt` / `watchedAt` 并回到原板块（在约恢复后按续约窗口重新带出续约跟进；长期观察恢复后按最后一条备注重新安排下次跟进；同一客户已有进行中记录时返回 409） |
-| POST | `/api/prospects/:id/watch` | **转为长期观察**：只把跟进角色行改为 `status='watching'` 并记录 `watchedAt`、清空 `nextFollowUp`；客户主档、SKU、金额与备注时间线原样保留，不新建记录（续约跟进不允许转入，返回 409） |
-| POST | `/api/renewals` | **新建 / 编辑续约客户**：服务端执行「在约判定」——在约则同步 SKU 列表 / 金额 / 到期时间回在约记录，不在约则按表单自动补建在约记录；仅距到期 ≤ `RENEW_WINDOW_DAYS` 天的保留在续约跟进（body：`id?` `name` `contact` `plan` `skus` `expectedAmount` `expiryDate` `lastFollowUp` `nextFollowUp`；返回 `contract` `createdContract` `removedFromRenew` `daysLeft` `renew`） |
-| POST | `/api/sync/renewals` | 手动触发续约同步（在约 → 续约跟进 + 续约客户的在约判定与窗口收口），返回 `createdContracts` / `exitedRenew` |
-| GET | `/api/customers` | 客户主档列表（名称唯一，同一家公司在跟进 / 在约共用一份） |
-| DELETE | `/api/contracts/:id` / `/api/prospects/:id` / `/api/deals/:id` / `/api/partners/:id` | 删除（删除客户 / 合作伙伴时同时级联删除其备注） |
+| GET | `/api/projects?status=&category=&customerId=` | 列表（带 `customerName` / `partnerName` / `sourceProjectName`，`skus` 已解析为数组） |
+| GET | `/api/projects/:id` | 单个项目 |
+| POST | `/api/projects` | 新建（`name` `customerId` `partnerId?` `category` `status?` `expectedAmount` `skus` `contact` `lastFollowUp` `nextFollowUp` `expiryDate?`；`won` 必须带 `contractAmount` `startDate` `expiryDate`） |
+| PUT | `/api/projects/:id` | 更新（支持部分字段，校验规则同上） |
+| DELETE | `/api/projects/:id` | 删除项目（连带项目级备注；有成交记录返回 409） |
+| POST | `/api/projects/:id/win` | **赢单**：状态置 `won` + 写成交金额 / 订阅周期 + 落 `deals`（事务，重复调用返回已有成交） |
+| POST | `/api/projects/:id/renew` | **创建续约项目**：新建 `category='renew'` 的 active 项目并关联 `sourceProjectId`（已有进行中续约项目返回 409） |
+| POST | `/api/projects/:id/watch` | **转长期观察**：`status='watching'` + `watchedAt`，清空 `nextFollowUp` |
+| POST | `/api/projects/:id/lost` | **标记 Lost**：`status='lost'` + `lostAt`（`won` 项目返回 409） |
+| POST | `/api/projects/:id/restore` | **恢复**：`watching` / `lost` 回到 `active` |
+| POST | `/api/sync/renewals` | 手动触发续约补建，返回 `{ created, renewWindowDays }`，幂等 |
+
+### 客户 / 合作伙伴 / 成交
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/customers` | 客户列表（附 `activeProjectCount` / `signedProjectCount` / `totalProjectCount`） |
+| POST | `/api/customers` | 新建客户（同名规范化后复用，返回该主档） |
+| PUT | `/api/customers/:id` | 改名 / 改联系人（撞名返回 409） |
+| DELETE | `/api/customers/:id` | 删除客户（名下还有项目返回 409） |
+| GET | `/api/partners` | 合作伙伴列表 |
+| POST / PUT / DELETE | `/api/partners` / `/api/partners/:id` | 合作伙伴增删改（删除时把 `projects.partnerId` 置空） |
+| GET | `/api/deals` | 成交列表（带 `projectId` / `projectName` / `customerName`） |
+| POST | `/api/deals` | 新增成交（必须选一个 `won` 项目，同一项目只允许一条，重复返回 409） |
+| PUT / DELETE | `/api/deals/:id` | 修改 / 删除成交 |
+
+### 备注 / 工作记录 / 材料
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/notes?customerType=customer&customerId=&projectId=` | 备注列表；`projectId` 为空返回该客户全部备注（带 `projectName`），有值时只返回该项目 |
+| POST | `/api/notes` | 新增备注（`id` `customerType` `customerId` `projectId?` `content`；项目级备注刷新该项目跟进时间） |
+| PUT / DELETE | `/api/notes/:id` | 修改内容 / 删除 |
 | GET | `/api/worklogs` | 工作记录列表 |
-| POST | `/api/worklogs` | 新增工作记录（字段 `id` `content` `date`） |
-| DELETE | `/api/worklogs/:id` | 删除单条工作记录 |
-| GET | `/api/notes?customerType=&customerId=` | 备注时间线列表（`customerType` 为 `contract` / `prospect` / `partner`） |
-| POST | `/api/notes` | 新增备注（字段 `id` `customerType` `customerId` `content`） |
-| DELETE | `/api/notes/:id` | 删除单条备注 |
+| POST | `/api/worklogs` | 新增（`id` `content` `date`） |
+| DELETE | `/api/worklogs/:id` | 删除 |
 | GET | `/api/materials` | 材料库列表 |
-| POST | `/api/materials` | 上传材料（multipart，字段 `file` + 可选 `note`，单个 ≤ 100MB） |
-| GET | `/api/materials/:id/download` | 以原始文件名下载材料 |
-| DELETE | `/api/materials/:id` | 删除材料（同时删除磁盘文件） |
-| GET | `/uploads/:storedName` | 材料静态资源（PDF / 图片 / HTML / SVG 可在线预览；HTML/SVG 前端经沙箱 iframe 隔离加载） |
+| POST | `/api/materials` | 上传（multipart：`file` + 可选 `note`，单个 ≤ 100MB） |
+| GET | `/api/materials/:id/download` | 按原始文件名下载 |
+| DELETE | `/api/materials/:id` | 删除（同时删磁盘文件） |
+| GET | `/uploads/:storedName` | 材料静态资源 |
 | GET | `/api/health` | 健康检查 |
 
 ## 目录结构
 
 ```
 ├── server/
-│   ├── index.js             # Express API 服务（含材料库上传/下载、工作记录）
-│   ├── db.js                # SQLite 建库建表（不写入任何演示数据）
-│   ├── export-notes.js      # 备注导出脚本（现存 + 归档按 id 去重，npm run notes:export）
-│   ├── data/smb.db          # 数据库文件（启动后自动生成，已 gitignore）
-│   ├── data/archive/        # 旧备注归档（JSONL，启动/读备注时自动追加）
-│   └── uploads/             # 材料库上传文件（已 gitignore，部署时保留）
+│   ├── index.js             # Express API（项目 / 客户 / 合作伙伴 / 成交 / 备注 / 工作记录 / 材料）
+│   ├── db.js                # 建表 + 旧数据迁移（projects_migrated_v1）+ 重复客户合并
+│   ├── export-notes.js      # 备注导出（现存 + 归档按 id 去重，支持按客户 / 项目 / 日期过滤）
+│   ├── verify-projects.js   # 迁移与接口验收脚本（自建临时库，SMB_DB_FILE 隔离）
+│   ├── data/smb.db          # 数据库文件（启动自动生成，已 gitignore）
+│   ├── data/archive/        # 旧备注归档（JSONL）
+│   └── uploads/             # 材料库文件（已 gitignore，部署时保留）
 └── src/
-    ├── App.jsx              # 主页面：状态管理 + KPI + 布局
-    ├── styles.css           # 全局样式
+    ├── App.jsx              # 主页面：状态管理 + 路由 + 详情弹窗
     ├── api.js               # 后端 API 客户端
+    ├── styles.css           # 全局样式
     ├── components/
-    │   ├── Header.jsx       # 顶部栏
-    │   ├── KpiCard.jsx      # KPI 指标卡
-    │   ├── WorkJournal.jsx  # 今日工作记录（分天时间线）
-    │   ├── ExpiryAlert.jsx  # 临期在约提示
-    │   ├── ExpiringContracts.jsx # 在约客户到期列表
-    │   ├── ProspectList.jsx # 跟进客户列表
-    │   ├── WatchList.jsx    # 长期观察（不需要定时跟进的客户归档）
-    │   ├── LostCustomers.jsx # Lost 客户（New Lost / Renew Lost 两块归档）
-    │   ├── PartnerList.jsx  # 合作伙伴列表
-    │   ├── ListTools.jsx    # 列表工具栏（紧凑 / 舒适密度 + 每页条数，四个列表共用）
-    │   ├── RevenuePanel.jsx # 成交金额（左数字概览 + 右最近成交两栏）
-    │   ├── MaterialLibrary.jsx # 材料库（上传/预览/下载/删除）
-    │   ├── forms.jsx        # 新增/编辑表单
-    │   ├── CustomerDetail.jsx # 客户详情（二级菜单 + 备注时间线）
-    │   ├── Modal.jsx / Badge.jsx
-    ├── data/
-    │   └── constants.js     # SKU / 跟进阶段
-    ├── hooks/
-    │   ├── useDbData.js     # 数据库 CRUD Hook（替代原 localStorage）
-    │   ├── useViewportFit.js # 窗口宽高监听 + 列表高度 / 一屏条数自适应
-    │   └── useFitPaging.js  # 列表密度 + 每页条数（默认舒适 + 自动铺满一屏）与分页
-    └── utils/               # 日期 / 金额 / SKU 多值工具（sku.js）
+    │   ├── Home.jsx            # 总览
+    │   ├── WorkJournal.jsx     # 今日工作（分天时间线）
+    │   ├── ProjectList.jsx     # 项目跟进（New / Renew 双视图）
+    │   ├── SignedProjects.jsx  # 已签项目（含续约入口）
+    │   ├── ProjectStatusList.jsx # 长期观察 / Lost 项目
+    │   ├── CustomerList.jsx    # 客户名单
+    │   ├── PartnerList.jsx     # 合作伙伴（含关联项目列）
+    │   ├── RevenuePanel.jsx    # 成交金额
+    │   ├── MaterialLibrary.jsx # 材料库
+    │   ├── Details.jsx         # 项目 / 客户 / 合作伙伴详情
+    │   ├── NotesSection.jsx    # 备注时间线（客户级 / 项目级复用）
+    │   ├── ExpiryAlert.jsx     # 已签项目临期提醒
+    │   ├── ListTools.jsx       # 密度 / 每页 / 分页（各列表共用）
+    │   ├── forms.jsx           # 项目 / 客户 / 合作伙伴 / 成交表单
+    │   └── Modal.jsx / Badge.jsx / DatePicker.jsx / Pagination.jsx / Sidebar.jsx / Header.jsx / icons.jsx
+    ├── data/constants.js    # SKUS / PROJECT_STATUS / RENEW_WINDOW_DAYS
+    ├── hooks/               # useDbData / useViewportFit / useFitPaging
+    └── utils/               # 日期 / 金额 / SKU 工具
 ```
-
