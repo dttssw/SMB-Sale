@@ -15,14 +15,15 @@ export const SKUS = [
 ];
 
 // 每个 SKU 的标准单价（元 / 份），写死在代码里，作为报价的基准价。
-// null 表示没有标准价：BE / PE 这类按项目谈判的 SKU 必须手动填实际金额，折扣也就无从反算。
+// SaaS 版与私有化同价。null 表示没有标准价：BE / PE 这类按项目谈判的 SKU
+// 必须手动填实际金额，折扣也就无从反算。
 export const SKU_PRICE = {
   专业版: 2399,
   旗舰版: 9988,
   BE版: null,
   PE版: null,
-  SaaS专业版: null,
-  SaaS旗舰版: null,
+  SaaS专业版: 2399,
+  SaaS旗舰版: 9988,
   Duo: 2399,
   'Duo Credit': 1,
   [SERVICE_SKU]: 12000,
