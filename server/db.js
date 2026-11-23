@@ -436,3 +436,32 @@ if (!migrated) {
 
 const filledDeals = backfillDealProjects();
 if (filledDeals) console.log(`✅ 已把 ${filledDeals} 条历史成交回填到对应已签项目`);
+
+/**
+ * PS 人天服务是一次性交付的项目，不该带订阅期限。
+ * 早期已签的 PS 项目存过订阅开始 / 到期，这里清成 NULL；只处理「全部 SKU 都是 PS 人天服务」的
+ * 已签项目，混选了订阅类 SKU 的项目保持原样。幂等，每次启动跑一遍。
+ */
+function clearServiceSubscriptionDates() {
+  const rows = db
+    .prepare(
+      `SELECT id, skus FROM projects
+       WHERE status = 'won' AND skus LIKE '%PS人天服务%'
+         AND (startDate IS NOT NULL OR expiryDate IS NOT NULL)`
+    )
+    .all();
+  const update = db.prepare(`UPDATE projects SET startDate = NULL, expiryDate = NULL WHERE id = ?`);
+  let cleared = 0;
+  for (const row of rows) {
+    const skus = parseSkus(row);
+    if (!skus.length || !skus.every((sku) => sku === 'PS人天服务')) continue;
+    update.run(row.id);
+    cleared += 1;
+  }
+  return cleared;
+}
+
+const clearedServiceProjects = clearServiceSubscriptionDates();
+if (clearedServiceProjects) {
+  console.log(`✅ 已清理 ${clearedServiceProjects} 个 PS 人天服务项目的订阅期限`);
+}

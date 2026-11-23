@@ -3,7 +3,7 @@ import Icon from './icons.jsx';
 import NotesSection from './NotesSection.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { skuEntriesOf } from '../utils/sku.js';
+import { skuEntriesOf, isServiceOnly } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 function Fact({ label, value }) {
@@ -23,7 +23,7 @@ function statusBadge(status) {
 }
 
 function projectExpiryBadge(project) {
-  if (project.status !== 'won' || !project.expiryDate) return null;
+  if (project.status !== 'won' || !project.expiryDate || isServiceOnly(project)) return null;
   const days = daysUntil(project.expiryDate);
   if (days == null) return null;
   if (days < 0) return { label: `已到期 ${-days} 天`, tone: 'danger' };
@@ -48,23 +48,42 @@ function SkuValue({ project }) {
 }
 
 /**
- * 操作按钮组：全部平铺在详情顶部，不再塞进「⋯ 更多」二级菜单。
- * 危险操作（删除）靠右单独放置，点击后仍走二次确认。
+ * 操作区：左侧是常规操作（编辑 / 观察 / Lost / 恢复），右侧是重量级操作。
+ * 赢单 / 签约、新建续约与「删除项目」放在同一组、同一尺寸——它们是会改写项目结果的动作，
+ * 不该和常规按钮混在一排；删除仍然单独靠最右，点击后走二次确认。
  */
 function DetailActions({ items }) {
   if (!items.length) return null;
+  const routine = items.filter((item) => !item.tone);
+  const major = items.filter((item) => item.tone === 'major');
+  const danger = items.filter((item) => item.tone === 'danger');
+
   return (
     <div className="detail-actions">
-      {items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          className={`btn btn-sm ${item.danger ? 'btn-danger' : item.primary ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={item.onClick}
-        >
-          {item.label}
-        </button>
-      ))}
+      <div className="detail-actions-group">
+        {routine.map((item) => (
+          <button key={item.label} type="button" className="btn btn-action" onClick={item.onClick}>
+            {item.icon && <Icon name={item.icon} />}
+            {item.label}
+          </button>
+        ))}
+      </div>
+      {(major.length > 0 || danger.length > 0) && (
+        <div className="detail-actions-group detail-actions-group-end">
+          {major.map((item) => (
+            <button key={item.label} type="button" className="btn btn-primary btn-action-lg" onClick={item.onClick}>
+              {item.icon && <Icon name={item.icon} />}
+              {item.label}
+            </button>
+          ))}
+          {danger.map((item) => (
+            <button key={item.label} type="button" className="btn btn-danger btn-action-lg" onClick={item.onClick}>
+              {item.icon && <Icon name={item.icon} />}
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -88,26 +107,35 @@ export function ProjectDetail({
   onCustomer,
   onNotesChanged,
 }) {
+  const serviceOnly = isServiceOnly(project);
   const expiry = projectExpiryBadge(project);
   const actions = [
-    { label: '编辑项目', onClick: onEdit },
-    ...(project.status === 'active' ? [{ label: '赢单 / 签约', primary: true, onClick: onWin }] : []),
-    ...(project.status === 'won' ? [{ label: '新建续约项目', primary: true, onClick: onRenew }] : []),
-    ...(project.status === 'active' ? [{ label: '转为长期观察', onClick: onWatch }] : []),
-    ...(['active', 'watching'].includes(project.status) && onLost
-      ? [{ label: '标记为 Lost', onClick: onLost }]
-      : []),
+    { label: '编辑项目', icon: 'edit', onClick: onEdit },
+    ...(project.status === 'active' ? [{ label: '转为长期观察', icon: 'eye', onClick: onWatch }] : []),
     ...(['lost', 'watching'].includes(project.status) && onRestore
-      ? [{ label: '恢复为进行中', primary: true, onClick: onRestore }]
+      ? [{ label: '恢复为进行中', icon: 'refresh', onClick: onRestore }]
       : []),
-    { label: '删除项目', danger: true, onClick: onDelete },
+    ...(['active', 'watching'].includes(project.status) && onLost
+      ? [{ label: '标记为 Lost', icon: 'alert', onClick: onLost }]
+      : []),
+    ...(project.status === 'active'
+      ? [{ label: '赢单 / 签约', icon: 'check', tone: 'major', onClick: onWin }]
+      : []),
+    ...(project.status === 'won' && !serviceOnly
+      ? [{ label: '新建续约项目', icon: 'refresh', tone: 'major', onClick: onRenew }]
+      : []),
+    { label: '删除项目', icon: 'trash', tone: 'danger', onClick: onDelete },
   ];
+  const hint =
+    project.status === 'won' && serviceOnly
+      ? '该项目已赢单，成交金额已保存；PS 人天服务一次性交付，没有订阅期限，也不产生续约'
+      : statusCopy[project.status];
 
   return (
     <div className="customer-detail">
       <div className={`status-hint ${project.status}`}>
         <Icon name={project.status === 'lost' ? 'alert' : project.status === 'won' ? 'check' : 'target'} />
-        <span>{statusCopy[project.status]}</span>
+        <span>{hint}</span>
       </div>
 
       <DetailActions items={actions} />
@@ -145,11 +173,14 @@ export function ProjectDetail({
                 label={project.status === 'won' ? '成交金额' : '预计金额'}
                 value={`${formatMoney(project.status === 'won' ? project.contractAmount : project.expectedAmount)} 元`}
               />
-              {project.status === 'won' && (
+              {project.status === 'won' && !serviceOnly && (
                 <>
                   <Fact label="订阅开始" value={formatDate(project.startDate)} />
                   <Fact label="订阅到期" value={formatDate(project.expiryDate)} />
                 </>
+              )}
+              {project.status === 'won' && serviceOnly && (
+                <Fact label="订阅期限" value="无 · PS 人天服务一次性交付" />
               )}
               {project.status !== 'won' && (
                 <>
@@ -189,8 +220,8 @@ export function CustomerDetail({
   const signed = projects.filter((p) => p.status === 'won');
   const lost = projects.filter((p) => p.status === 'lost');
   const actions = [
-    { label: '编辑客户', onClick: onEdit },
-    { label: '删除客户', danger: true, onClick: onDelete },
+    { label: '编辑客户', icon: 'edit', onClick: onEdit },
+    { label: '删除客户', icon: 'trash', tone: 'danger', onClick: onDelete },
   ];
 
   return (
@@ -256,8 +287,8 @@ export function CustomerDetail({
 
 export function PartnerDetail({ partner, projects, onEdit, onDelete, onViewProject, onNotesChanged }) {
   const actions = [
-    { label: '编辑合作伙伴', onClick: onEdit },
-    { label: '删除合作伙伴', danger: true, onClick: onDelete },
+    { label: '编辑合作伙伴', icon: 'edit', onClick: onEdit },
+    { label: '删除合作伙伴', icon: 'trash', tone: 'danger', onClick: onDelete },
   ];
   return (
     <div className="customer-detail">

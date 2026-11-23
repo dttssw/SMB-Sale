@@ -1,3 +1,6 @@
+// PS 人天服务是一次性交付的服务类 SKU，不产生订阅期限
+export const SERVICE_SKU = 'PS人天服务';
+
 // 项目 SKU：project.skus 为完整数组，展示与编辑共用这一套选项。
 export const SKUS = [
   '专业版',
@@ -8,7 +11,7 @@ export const SKUS = [
   'SaaS旗舰版',
   'Duo',
   'Duo Credit',
-  'PS人天服务',
+  SERVICE_SKU,
 ];
 
 export const PROJECT_STATUS = {

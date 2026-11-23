@@ -1,6 +1,8 @@
 // SKU 多值工具
 // 数据库/接口里的 skus 可能是数组，也可能是 JSON 数组文本（如 '["Duo","PS人天服务"]'）；
 // 历史记录只有单个 plan 字段，这里统一回退成 [plan]，让表单与详情都能拿到完整列表。
+import { SERVICE_SKU } from '../data/constants.js';
+
 export function parseSkus(value) {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string') {
@@ -75,5 +77,12 @@ export function entriesToPayload(entries) {
     skuQty[sku] = Number.isFinite(qty) && qty > 0 ? Math.max(1, Math.round(qty)) : 1;
   }
   return { skus, skuQty };
+}
+
+// 纯服务项目：全部 SKU 都是 PS 人天服务 —— 一次性交付，不设订阅开始 / 到期时间。
+// 混选了订阅类 SKU 的项目照旧按订阅项目处理（含 PS 部分只是其中一条）。
+export function isServiceOnly(record) {
+  const skus = skusOf(record);
+  return skus.length > 0 && skus.every((sku) => sku === SERVICE_SKU);
 }
 

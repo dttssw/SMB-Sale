@@ -18,6 +18,7 @@ const WON = 'won';
 const LOST = 'lost';
 const STATUSES = [ACTIVE, WATCHING, WON, LOST];
 const CATEGORY = ['new', 'renew'];
+const SERVICE_SKU = 'PS人天服务';
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -69,6 +70,11 @@ function parseSkus(value) {
     }
   }
   return [];
+}
+
+// PS 人天服务是一次性交付，不产生订阅开始 / 到期；只有全部 SKU 都是它时才按服务项目处理
+function isServiceOnly(skus) {
+  return skus.length > 0 && skus.every((sku) => sku === SERVICE_SKU);
 }
 
 // 每条 SKU 的数量：入参可能是对象，也可能是 JSON 文本；只保留当前项目里存在的 SKU，缺省按 1 计
@@ -180,6 +186,9 @@ function validateProjectPayload(input, existing = null) {
   const quantityRaw = input.quantity !== undefined ? input.quantity : existing?.quantity;
   const quantity = Math.max(1, Math.trunc(Number(quantityRaw)) || 1);
 
+  const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
+  const serviceOnly = isServiceOnly(skus);
+
   let contractAmount =
     input.contractAmount !== undefined ? input.contractAmount : existing?.contractAmount;
   contractAmount = contractAmount == null || contractAmount === '' ? null : num(contractAmount, NaN);
@@ -187,13 +196,15 @@ function validateProjectPayload(input, existing = null) {
   const expiryDate = trim(input.expiryDate ?? existing?.expiryDate) || null;
   if (status === WON) {
     if (!Number.isFinite(contractAmount) || contractAmount <= 0) throw httpError(400, '已签项目必须填写成交金额');
-    if (!startDate || !expiryDate) throw httpError(400, '已签项目必须填写订阅开始和到期时间');
-    if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
+    // PS 人天服务一次性交付，不校验也不保存订阅期限
+    if (!serviceOnly) {
+      if (!startDate || !expiryDate) throw httpError(400, '已签项目必须填写订阅开始和到期时间');
+      if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
+    }
   } else if (status === ACTIVE) {
     contractAmount = null;
     // 续约项目允许带原订阅到期日用于提醒；新签项目不保存合同周期。
     if (category !== 'renew') {
-      const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
       return {
         name,
         customerId,
@@ -214,7 +225,6 @@ function validateProjectPayload(input, existing = null) {
     }
   }
 
-  const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
   return {
     name,
     customerId,
@@ -225,8 +235,8 @@ function validateProjectPayload(input, existing = null) {
     expectedAmount,
     contractAmount: status === WON ? contractAmount : null,
     quantity,
-    startDate: status === WON ? startDate : null,
-    expiryDate,
+    startDate: status === WON && !serviceOnly ? startDate : null,
+    expiryDate: status === WON && serviceOnly ? null : expiryDate,
     skus,
     skuQty: parseSkuQty(input.skuQty !== undefined ? input.skuQty : existing?.skuQty, skus),
     lastFollowUp: trim(input.lastFollowUp ?? existing?.lastFollowUp) || null,
@@ -738,10 +748,13 @@ app.post('/api/projects/:id/win', (req, res, next) => {
     const amount = num(body.contractAmount, 0);
     const startDate = trim(body.startDate);
     const expiryDate = trim(body.expiryDate);
-    if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
-    if (!startDate || !expiryDate) throw httpError(400, '请选择订阅开始和到期时间');
-    if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
     const skus = body.skus !== undefined ? parseSkus(body.skus) : parseSkus(existing.skus);
+    const serviceOnly = isServiceOnly(skus);
+    if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
+    if (!serviceOnly) {
+      if (!startDate || !expiryDate) throw httpError(400, '请选择订阅开始和到期时间');
+      if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
+    }
     const skuQty = parseSkuQty(body.skuQty !== undefined ? body.skuQty : existing.skuQty, skus);
     const quantity = Math.max(1, Math.trunc(Number(body.quantity !== undefined ? body.quantity : existing.quantity)) || 1);
 
@@ -760,7 +773,15 @@ app.post('/api/projects/:id/win', (req, res, next) => {
           watchedAt = NULL,
           closedAt = NULL
         WHERE id = ?
-      `).run(amount, startDate, expiryDate, quantity, JSON.stringify(skus), JSON.stringify(skuQty), existing.id);
+      `).run(
+        amount,
+        serviceOnly ? null : startDate,
+        serviceOnly ? null : expiryDate,
+        quantity,
+        JSON.stringify(skus),
+        JSON.stringify(skuQty),
+        existing.id
+      );
 
       const oldDeal = db.prepare(`SELECT * FROM deals WHERE projectId = ?`).get(existing.id);
       if (oldDeal) return oldDeal.id;
@@ -790,6 +811,9 @@ app.post('/api/projects/:id/renew', (req, res, next) => {
     const source = projectById(req.params.id);
     if (!source) throw httpError(404, '项目不存在');
     if (source.status !== WON) throw httpError(409, '只有已签项目才能新建续约');
+    if (isServiceOnly(parseSkus(source.skus))) {
+      throw httpError(409, 'PS 人天服务是一次性交付，没有订阅期限，不需要续约');
+    }
     const activeRenew = db
       .prepare(`SELECT id FROM projects WHERE sourceProjectId = ? AND status IN ('active', 'watching') LIMIT 1`)
       .get(source.id);

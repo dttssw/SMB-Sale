@@ -6,13 +6,14 @@ import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { skuEntriesOf } from '../utils/sku.js';
+import { skuEntriesOf, isServiceOnly } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 const FALLBACK_ROWS = 8;
 
-function statusOf(expiryDate) {
-  const days = daysUntil(expiryDate);
+function statusOf(project) {
+  if (isServiceOnly(project)) return { label: '一次性交付', tone: 'info' };
+  const days = daysUntil(project.expiryDate);
   if (days == null) return { label: '未设置到期', tone: 'info' };
   if (days < 0) return { label: `已到期 ${-days} 天`, tone: 'danger' };
   if (days === 0) return { label: '今日到期', tone: 'danger' };
@@ -41,11 +42,15 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
     slicePage,
   } = useFitPaging({ count: sorted.length, viewportHeight: viewport.height, fallbackRows: FALLBACK_ROWS });
   const paged = slicePage(sorted);
-  const stableCount = sorted.filter((project) => daysUntil(project.expiryDate) > RENEW_WINDOW_DAYS).length;
+  const stableCount = sorted.filter(
+    (project) => !isServiceOnly(project) && daysUntil(project.expiryDate) > RENEW_WINDOW_DAYS
+  ).length;
   const expiringCount = sorted.filter((project) => {
+    if (isServiceOnly(project)) return false;
     const days = daysUntil(project.expiryDate);
     return days != null && days <= RENEW_WINDOW_DAYS;
   }).length;
+  const serviceCount = sorted.filter((project) => isServiceOnly(project)).length;
 
   const handleRowClick = (e, row) => {
     if (e.target.closest('button, a, input, select, textarea, label')) return;
@@ -72,6 +77,7 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
         <span className="pill pill-info">已签 {sorted.length} 个项目</span>
         <span className="pill pill-ok">正常稳定 {stableCount}</span>
         <span className="pill pill-warn">临期 / 已到期 {expiringCount}</span>
+        {serviceCount > 0 && <span className="pill pill-info">一次性交付 {serviceCount}</span>}
       </div>
       <div
         className="table-wrap fit-scroll"
@@ -94,7 +100,8 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
           </thead>
           <tbody>
             {paged.map((project) => {
-              const status = statusOf(project.expiryDate);
+              const status = statusOf(project);
+              const serviceOnly = isServiceOnly(project);
               const entries = skuEntriesOf(project);
               return (
                 <tr key={project.id} className="row-clickable" onClick={(e) => handleRowClick(e, project)}>
@@ -134,21 +141,23 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
                   <td className="num col-opt">{project.quantity ?? 1}</td>
                   <td className="num strong">{formatMoney(project.contractAmount)}</td>
                   <td className="num">
-                    {formatDate(project.startDate)}
-                    <div className="cell-sub">至 {formatDate(project.expiryDate)}</div>
+                    {serviceOnly ? '—' : formatDate(project.startDate)}
+                    <div className="cell-sub">{serviceOnly ? '无订阅期限' : `至 ${formatDate(project.expiryDate)}`}</div>
                   </td>
                   <td>
                     <Badge tone={status.tone}>{status.label}</Badge>
                   </td>
                   <td className="ops">
-                    <button
-                      type="button"
-                      className="link-btn ok"
-                      onClick={() => onRenew(project)}
-                      title="从该项目新建一个独立续约项目"
-                    >
-                      续约
-                    </button>
+                    {!serviceOnly && (
+                      <button
+                        type="button"
+                        className="link-btn ok"
+                        onClick={() => onRenew(project)}
+                        title="从该项目新建一个独立续约项目"
+                      >
+                        续约
+                      </button>
+                    )}
                     <span className="row-chevron">
                       <Icon name="chevronRight" />
                     </span>

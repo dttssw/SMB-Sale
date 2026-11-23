@@ -435,13 +435,35 @@ button, input, select, textarea { font-family: inherit; }
 }
 .datepicker-clear:hover { background: var(--surface-2); color: var(--fg); }
 
-/* 详情页操作按钮组：编辑 / 赢单 / 续约 / 状态变更全部平铺，不再收进「更多」二级菜单；
-   删除靠右单独放置，视觉上与常规操作分开 */
-.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); padding: var(--s4) var(--s5) 0; }
-.detail-actions .btn-danger { margin-left: auto; }
+/* 详情页操作区：左侧常规操作，右侧重量级操作（赢单 / 续约 与 删除同尺寸）
+   常规按钮给底色 + 明显描边，不再是一行看着像文字的小按钮 */
+.detail-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s5);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--line);
+}
+.detail-actions-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.detail-actions-group-end { margin-left: auto; gap: var(--s3); }
+.detail-actions .btn svg { flex-shrink: 0; }
+.detail-actions .btn-action {
+  height: 32px; padding: 0 var(--s3);
+  background: var(--surface-2); border-color: var(--line-strong); color: var(--fg);
+}
+.detail-actions .btn-action:hover:not(:disabled) { background: #21252A; border-color: var(--fg-dim); color: var(--fg); }
+.detail-actions .btn-action:active:not(:disabled) { background: var(--surface); }
+/* 重量级动作：比常规按钮大一号、字重更重，和「删除项目」同一量级 */
+.detail-actions .btn-action-lg { height: 36px; padding: 0 var(--s5); font-size: var(--fs-sm); font-weight: 600; }
 .btn-danger { border-color: var(--line-strong); color: var(--danger); }
 .btn-danger:hover:not(:disabled) { background: rgba(229, 83, 75, .12); border-color: var(--danger); }
 .btn-danger:active:not(:disabled) { background: rgba(229, 83, 75, .2); }
+.detail-actions .btn-danger.btn-action-lg {
+  background: rgba(229, 83, 75, .1);
+  border-color: rgba(229, 83, 75, .55);
+}
+.detail-actions .btn-danger.btn-action-lg:hover:not(:disabled) {
+  background: rgba(229, 83, 75, .18);
+  border-color: var(--danger);
+}
 .btn-danger-solid { background: var(--danger); color: #fff; }
 .btn-danger-solid:hover:not(:disabled) { background: #EF6A62; }
 .btn-danger-solid:active:not(:disabled) { background: #C9433C; }

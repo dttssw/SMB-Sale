@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
 import { entriesToPayload, skuEntriesOf } from '../utils/sku.js';
-import { SKUS } from '../data/constants.js';
+import { SKUS, SERVICE_SKU } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 import Icon from './icons.jsx';
 
@@ -127,6 +127,9 @@ export function ProjectForm({
   const [newCustomerContact, setNewCustomerContact] = useState('');
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  // 只选了 PS 人天服务 = 一次性交付的服务项目，不填订阅开始 / 到期
+  const pickedSkus = form.skus.map((entry) => entry.sku).filter(Boolean);
+  const serviceOnly = pickedSkus.length > 0 && pickedSkus.every((sku) => sku === SERVICE_SKU);
 
   const onStartDateChange = (value) =>
     setForm((prev) => ({ ...prev, startDate: value, expiryDate: oneYearFrom(value) }));
@@ -142,8 +145,10 @@ export function ProjectForm({
     if (Number(form.expectedAmount) <= 0) return setError('请填写预计成交金额');
     if (isSigned) {
       if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
-      if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
-      if (form.startDate > form.expiryDate) return setError('订阅开始时间不能晚于到期时间');
+      if (!serviceOnly) {
+        if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
+        if (form.startDate > form.expiryDate) return setError('订阅开始时间不能晚于到期时间');
+      }
     }
 
     let customerId = form.customerId;
@@ -167,8 +172,8 @@ export function ProjectForm({
         quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
         expectedAmount: Number(form.expectedAmount),
         contractAmount: isSigned ? Number(form.contractAmount) : null,
-        startDate: isSigned ? form.startDate : null,
-        expiryDate: isSigned ? form.expiryDate : form.expiryDate || null,
+        startDate: isSigned && !serviceOnly ? form.startDate : null,
+        expiryDate: isSigned ? (serviceOnly ? null : form.expiryDate) : form.expiryDate || null,
         category: isSigned ? form.category || null : form.category,
         nextFollowUp: isSigned ? '' : form.nextFollowUp,
       });
@@ -284,7 +289,7 @@ export function ProjectForm({
         />
       </Field>
 
-      {isSigned && (
+      {isSigned && !serviceOnly && (
         <>
           <Field label="订阅开始时间" required>
             <DatePicker value={form.startDate} onChange={onStartDateChange} clearable={false} />
@@ -293,6 +298,11 @@ export function ProjectForm({
             <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
           </Field>
         </>
+      )}
+      {isSigned && serviceOnly && (
+        <div className="form-note">
+          PS 人天服务是一次性交付的项目，不设订阅开始与到期时间，也不会进入续约提醒。
+        </div>
       )}
 
       {!isSigned && (
@@ -322,6 +332,8 @@ export function WinProjectForm({ project, onSave, onCancel }) {
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const pickedSkus = form.skus.map((entry) => entry.sku).filter(Boolean);
+  const serviceOnly = pickedSkus.length > 0 && pickedSkus.every((sku) => sku === SERVICE_SKU);
   const onStartDateChange = (value) =>
     setForm((prev) => ({ ...prev, startDate: value, expiryDate: oneYearFrom(value) }));
   const onExpiryDateChange = (value) =>
@@ -331,14 +343,17 @@ export function WinProjectForm({ project, onSave, onCancel }) {
     e.preventDefault();
     if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
     if (Number(form.quantity) < 1) return setError('项目数量至少为 1');
-    if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
     const { skus, skuQty } = entriesToPayload(form.skus);
     if (!skus.length) return setError('请选择 SKU');
+    if (!serviceOnly) {
+      if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
+      if (form.startDate > form.expiryDate) return setError('订阅开始时间不能晚于到期时间');
+    }
     onSave({
       contractAmount: Number(form.contractAmount),
       quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
-      startDate: form.startDate,
-      expiryDate: form.expiryDate,
+      startDate: serviceOnly ? null : form.startDate,
+      expiryDate: serviceOnly ? null : form.expiryDate,
       skus,
       skuQty,
     });
@@ -364,12 +379,20 @@ export function WinProjectForm({ project, onSave, onCancel }) {
       <Field label="SKU" required full>
         <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
-      <Field label="订阅开始时间" required>
-        <DatePicker value={form.startDate} onChange={onStartDateChange} clearable={false} />
-      </Field>
-      <Field label="订阅到期时间" required>
-        <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
-      </Field>
+      {serviceOnly ? (
+        <div className="form-note">
+          PS 人天服务按人天一次性交付，没有订阅期限：赢单后只保存成交金额，不进入续约提醒。
+        </div>
+      ) : (
+        <>
+          <Field label="订阅开始时间" required>
+            <DatePicker value={form.startDate} onChange={onStartDateChange} clearable={false} />
+          </Field>
+          <Field label="订阅到期时间" required>
+            <DatePicker value={form.expiryDate} onChange={onExpiryDateChange} clearable={false} />
+          </Field>
+        </>
+      )}
       {error && <div className="form-error">{error}</div>}
       <Actions onCancel={onCancel} />
     </form>
