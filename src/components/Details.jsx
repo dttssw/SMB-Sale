@@ -3,7 +3,7 @@ import Icon from './icons.jsx';
 import NotesSection from './NotesSection.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { skuEntriesOf, isServiceOnly } from '../utils/sku.js';
+import { skuEntriesOf, isServiceOnly, basePriceOf } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 function Fact({ label, value }) {
@@ -37,12 +37,24 @@ function SkuValue({ project }) {
   if (!entries.length) return '—';
   return (
     <span className="sku-tags">
-      {entries.map(({ sku, qty }) => (
-        <span className="plan-tag" key={sku}>
-          {sku}
-          <i className="sku-qty-tag">×{qty}</i>
-        </span>
-      ))}
+      {entries.map(({ sku, qty, price, discount }) => {
+        const subtotal = (Number(price) || 0) * qty;
+        const discounted = discount != null && discount < 100;
+        return (
+          <span
+            className="plan-tag"
+            key={sku}
+            title={`标准价 ${formatMoney(basePriceOf(sku) || 0)} · 实际单价 ${formatMoney(price)}${
+              discounted ? ` · 折扣 ${discount}%` : ''
+            }`}
+          >
+            {sku}
+            <i className="sku-qty-tag">×{qty}</i>
+            {subtotal > 0 ? <i className="sku-amount-tag">{formatMoney(subtotal)}</i> : null}
+            {discounted ? <i className="sku-qty-tag">{discount}%</i> : null}
+          </span>
+        );
+      })}
     </span>
   );
 }

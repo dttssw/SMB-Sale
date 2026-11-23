@@ -395,17 +395,62 @@ button, input, select, textarea { font-family: inherit; }
 .modal-error { margin-bottom: var(--s4); }
 .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: var(--s2); margin-top: var(--s1); }
 
-/* 多 SKU 编辑器：默认 1 条，可点击「添加 SKU」继续添加；第一条为主 SKU */
+/* 多 SKU 编辑器：默认 1 条，可点击「添加 SKU」继续添加；第一条为主 SKU。
+   每条 SKU 一块：上排选 SKU / 数量 / 移除，下排标准价、折扣、实际金额与小计。 */
 .sku-editor { display: flex; flex-direction: column; gap: var(--s2); }
-.sku-row { display: flex; align-items: center; gap: var(--s2); }
-.sku-row select { flex: 1 1 auto; min-width: 0; }
+.sku-row {
+  display: flex; flex-direction: column; gap: var(--s2);
+  padding: var(--s3); border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.sku-row-head { display: flex; align-items: center; gap: var(--s2); }
+.sku-row-head select { flex: 1 1 auto; min-width: 0; }
+.sku-row-money { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.sku-mini { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--fs-2xs); color: var(--fg-muted); }
+.sku-mini-label { white-space: nowrap; }
+.sku-base-price { font-size: var(--fs-xs); color: var(--fg); font-variant-numeric: tabular-nums; }
+.sku-input-wrap { display: inline-flex; align-items: center; gap: var(--s1); }
+.sku-unit { font-size: var(--fs-2xs); color: var(--fg-dim); }
+.sku-row input.sku-discount,
+.sku-row input.sku-price {
+  height: 28px; padding: 0 var(--s2);
+  color: var(--fg); background: var(--bg); text-align: right;
+  border: 1px solid var(--line); border-radius: var(--r-xs);
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; outline: none;
+  transition: border-color var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+.sku-row input.sku-discount { width: 68px; }
+.sku-row input.sku-price { width: 96px; }
+/* 去掉数字输入框的上下箭头，否则窄输入框里的数字会被挤出可视区 */
+.sku-row input.sku-discount,
+.sku-row input.sku-price { appearance: textfield; -moz-appearance: textfield; }
+.sku-row input.sku-discount::-webkit-outer-spin-button,
+.sku-row input.sku-discount::-webkit-inner-spin-button,
+.sku-row input.sku-price::-webkit-outer-spin-button,
+.sku-row input.sku-price::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.sku-row input.sku-discount:focus,
+.sku-row input.sku-price:focus { border-color: var(--line-strong); box-shadow: 0 0 0 2px var(--focus-ring); }
+.sku-row input.sku-discount:disabled { color: var(--fg-dim); cursor: not-allowed; }
+.sku-subtotal {
+  margin-left: auto; font-size: var(--fs-xs); color: var(--fg-muted);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.sku-subtotal b { margin-left: var(--s1); color: var(--fg); font-weight: 600; }
 .sku-remove { flex-shrink: 0; }
 .sku-editor-foot { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.sku-total { margin-left: auto; font-size: var(--fs-sm); color: var(--fg-muted); }
+.sku-total b {
+  margin-left: var(--s1); font-size: var(--fs-md); font-weight: 600;
+  color: var(--fg); font-variant-numeric: tabular-nums;
+}
+/* 自动汇总的金额字段：只读展示，视觉上仍是输入框，方便和旁边字段对齐 */
+.field input.amount-readonly { font-weight: 600; font-variant-numeric: tabular-nums; cursor: default; }
 /* SKU 标签组（客户详情 / 在约客户列表） */
 .sku-tags { display: inline-flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .sku-more { color: var(--fg-dim); }
-/* 标签里的数量：弱化处理，别抢 SKU 名 */
+/* 标签里的数量与金额：弱化处理，别抢 SKU 名 */
 .sku-qty-tag { font-style: normal; font-weight: 500; color: var(--fg-dim); }
+.sku-amount-tag { font-style: normal; font-weight: 500; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 /* 每条 SKU 的数量输入：SKU 下拉吃掉剩余宽度，数量固定 64px
    （选择器要压过 .field input 的 width:100%） */
 .sku-qty-wrap { display: inline-flex; align-items: center; gap: var(--s1); flex-shrink: 0; }

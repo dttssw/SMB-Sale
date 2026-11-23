@@ -91,7 +91,8 @@ node server/verify-projects.js
 - **续约**：已签项目在 `RENEW_WINDOW_DAYS` 内（或已逾期）时提醒，也可随时手动续约；生成的续约项目 `category='renew'`、`status='active'`、`sourceProjectId` 指向原项目。同一已签项目已有进行中（`active` / `watching`）的续约项目时，手动续约返回 409；`POST /api/sync/renewals` 则是幂等补建（已有就跳过，不会重复创建）。
 - **客户名唯一**：名称先规范化（去首尾空白、连续空白折叠），`idx_customers_name` 唯一索引 + 写入时复用 / 409 双重保证；服务启动会合并历史重复主档（备注、项目、成交一并改指向保留的那条）。
 - **删除保护**：客户名下还有项目 → 409；项目已有成交记录 → 409（要删先删成交）；删项目会连带删它的项目级备注，并把指向它的续约项目 `sourceProjectId` 置空；删合作伙伴只把项目的 `partnerId` 置空，项目本身不受影响。
-- **多 SKU**：每个项目默认 1 条 SKU，可继续添加（至少保留一条，第一条为主 SKU），完整列表存 `skus`（JSON 数组文本）。选项见 `src/data/constants.js` 的 `SKUS`。
+- **多 SKU 与报价**：每个项目默认 1 条 SKU，可继续添加（至少保留一条，第一条为主 SKU），完整列表存 `skus`（JSON 数组文本），选项见 `src/data/constants.js` 的 `SKUS`。每条 SKU 单独存数量 `skuQty`、实际金额 `skuPrice`、折扣 `skuDiscount`（都是「键为 SKU 名」的 JSON 对象）。
+- **标准价与折扣联动**：标准价写死在 `src/data/constants.js` 的 `SKU_PRICE`（专业版 2399、旗舰版 9988、Duo 2399、Duo Credit 1、PS 人天服务 12000；BE / PE 与两个 SaaS 版本没有标准价，必须手动填实际金额）。表单里填折扣按标准价算实际金额，填实际金额反算折扣；项目金额 = Σ 实际金额 × 数量，前端只读展示、后端按同一公式重算，避免两边对不上。老项目没有 `skuPrice` 时，前端按标准价占比把历史总额分摊回各条 SKU，打开后直接保存不会改掉历史金额。
 - **订阅周期联动**：选订阅开始时间自动算一年后到期（前一天），选到期时间反推开始时间，双向联动；日期选择器支持直接下拉选年 / 月，改年月自动收敛非法日期（1月31日 → 2月变月末）。
 - **列表密度与每页条数**：项目跟进 / 已签项目 / 长期观察 / Lost / 客户名单 / 合作伙伴共用同一套工具栏，默认「舒适」密度，每页默认「自动」（按窗口高度铺满一屏，选择器旁显示「自适应 N 条」），也可手选 8 / 15 / 全部。
 - **备注归档**：`notes` 只保留最近 1 个月，更早的追加到 `server/data/archive/notes-archive.jsonl`（JSONL，含原字段 + `archivedAt`），**先确认落盘再从主表删除**。导出用 `npm run notes:export`：
@@ -110,7 +111,7 @@ node server/verify-projects.js
 | --- | --- | --- |
 | GET | `/api/projects?status=&category=&customerId=` | 列表（带 `customerName` / `partnerName` / `sourceProjectName`，`skus` 已解析为数组） |
 | GET | `/api/projects/:id` | 单个项目 |
-| POST | `/api/projects` | 新建（`name` `customerId` `partnerId?` `category` `status?` `expectedAmount` `skus` `contact` `lastFollowUp` `nextFollowUp` `expiryDate?`；`won` 必须带 `contractAmount` `startDate` `expiryDate`） |
+| POST | `/api/projects` | 新建（`name` `customerId` `partnerId?` `category` `status?` `skus` `skuQty` `skuPrice` `skuDiscount` `contact` `lastFollowUp` `nextFollowUp` `expiryDate?`；金额由 SKU 明细汇总，不用传 `expectedAmount`；`won` 必须带订阅起止时间） |
 | PUT | `/api/projects/:id` | 更新（支持部分字段，校验规则同上） |
 | DELETE | `/api/projects/:id` | 删除项目（连带项目级备注；有成交记录返回 409） |
 | POST | `/api/projects/:id/win` | **赢单**：状态置 `won` + 写成交金额 / 订阅周期 + 落 `deals`（事务，重复调用返回已有成交） |

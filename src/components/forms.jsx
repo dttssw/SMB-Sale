@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
-import { entriesToPayload, skuEntriesOf } from '../utils/sku.js';
+import { formatMoney } from '../utils/format.js';
+import {
+  basePriceOf,
+  discountFromPrice,
+  entriesToPayload,
+  priceFromDiscount,
+  skuEntriesOf,
+  skuTotalOf,
+} from '../utils/sku.js';
 import { SKUS, SERVICE_SKU } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 import Icon from './icons.jsx';
@@ -31,12 +39,54 @@ function Actions({ onCancel }) {
   );
 }
 
+// 一条 SKU 的初始报价：有标准价的按标准价、折扣 100；BE / PE 没有基准价，实际金额留空手动填
+function newSkuEntry(sku = '') {
+  const base = basePriceOf(sku);
+  return {
+    sku,
+    qty: 1,
+    base,
+    price: base ?? '',
+    discount: base ? 100 : '',
+  };
+}
+
 function SkuEditor({ value, onChange }) {
-  const list = value && value.length ? value : [{ sku: '', qty: 1 }];
+  const list = value && value.length ? value : [newSkuEntry()];
   const picked = list.filter((entry) => entry.sku);
+  const total = skuTotalOf(list);
   const update = (index, patch) => onChange(list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
-  const add = () => onChange([...list, { sku: '', qty: 1 }]);
+  const add = () => onChange([...list, newSkuEntry()]);
   const remove = (index) => onChange(list.filter((_, i) => i !== index));
+
+  const pickSku = (index, sku) => {
+    const entry = newSkuEntry(sku);
+    update(index, { sku, price: entry.price, discount: entry.discount, base: entry.base });
+  };
+
+  // 折扣与实际金额双向联动：改折扣按标准价算金额，改金额反算折扣。
+  // 输入过程中保留用户原始字符串（"0."、"7000." 这类中间态），只在越界时收敛。
+  const setDiscount = (index, raw) => {
+    const entry = list[index];
+    if (raw === '') return update(index, { discount: '' });
+    const parsed = Number(raw);
+    if (!entry.base || !Number.isFinite(parsed)) return update(index, { discount: raw });
+    const discount = Math.min(100, Math.max(0, parsed));
+    update(index, {
+      discount: discount === parsed ? raw : String(discount),
+      price: priceFromDiscount(entry.base, discount),
+    });
+  };
+  const setPrice = (index, raw) => {
+    const entry = list[index];
+    if (raw === '') return update(index, { price: '', discount: '' });
+    const parsed = Number(raw);
+    const price = Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+    update(index, {
+      price: price === null || price === parsed ? raw : String(price),
+      discount: entry.base && price !== null ? discountFromPrice(price, entry.base) : '',
+    });
+  };
 
   return (
     <div className="sku-editor">
@@ -44,35 +94,80 @@ function SkuEditor({ value, onChange }) {
         const others = list.filter((item, i) => i !== index && item.sku).map((item) => item.sku);
         return (
           <div className="sku-row" key={index}>
-            <select
-              value={entry.sku}
-              onChange={(e) => update(index, { sku: e.target.value })}
-              aria-label={`SKU ${index + 1}`}
-            >
-              <option value="">{index === 0 ? '请选择 SKU' : '请选择 SKU（可选）'}</option>
-              {SKUS.map((s) => (
-                <option key={s} value={s} disabled={others.includes(s)}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <span className="sku-qty-wrap">
-              <input
-                type="number"
-                min="1"
-                step="1"
-                className="sku-qty"
-                value={entry.qty ?? 1}
-                onChange={(e) => update(index, { qty: e.target.value })}
-                aria-label={`SKU ${index + 1} 的数量`}
-              />
-              <span className="sku-qty-unit">份</span>
-            </span>
-            {list.length > 1 && (
-              <button type="button" className="btn btn-ghost btn-sm sku-remove" onClick={() => remove(index)}>
-                移除
-              </button>
-            )}
+            <div className="sku-row-head">
+              <select
+                value={entry.sku}
+                onChange={(e) => pickSku(index, e.target.value)}
+                aria-label={`SKU ${index + 1}`}
+              >
+                <option value="">{index === 0 ? '请选择 SKU' : '请选择 SKU（可选）'}</option>
+                {SKUS.map((s) => (
+                  <option key={s} value={s} disabled={others.includes(s)}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <span className="sku-qty-wrap">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  className="sku-qty"
+                  value={entry.qty ?? 1}
+                  onChange={(e) => update(index, { qty: e.target.value })}
+                  aria-label={`SKU ${index + 1} 的数量`}
+                />
+                <span className="sku-qty-unit">{entry.sku === SERVICE_SKU ? '人天' : '份'}</span>
+              </span>
+              {list.length > 1 && (
+                <button type="button" className="btn btn-ghost btn-sm sku-remove" onClick={() => remove(index)}>
+                  移除
+                </button>
+              )}
+            </div>
+            <div className="sku-row-money">
+              <span className="sku-mini">
+                <span className="sku-mini-label">标准价</span>
+                <span className="sku-base-price">{entry.base ? formatMoney(entry.base) : '手动填写'}</span>
+              </span>
+              <label className="sku-mini">
+                <span className="sku-mini-label">折扣</span>
+                <span className="sku-input-wrap">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    className="sku-discount"
+                    value={entry.discount ?? ''}
+                    onChange={(e) => setDiscount(index, e.target.value)}
+                    disabled={!entry.base}
+                    placeholder={entry.base ? '100' : '—'}
+                    aria-label={`SKU ${index + 1} 的折扣`}
+                  />
+                  <span className="sku-unit">%</span>
+                </span>
+              </label>
+              <label className="sku-mini">
+                <span className="sku-mini-label">实际金额</span>
+                <span className="sku-input-wrap">
+                  <span className="sku-unit">¥</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="sku-price"
+                    value={entry.price ?? ''}
+                    onChange={(e) => setPrice(index, e.target.value)}
+                    placeholder="0"
+                    aria-label={`SKU ${index + 1} 的实际金额`}
+                  />
+                </span>
+              </label>
+              <span className="sku-subtotal">
+                小计 <b>{formatMoney(skuTotalOf([entry]))}</b>
+              </span>
+            </div>
           </div>
         );
       })}
@@ -86,13 +181,16 @@ function SkuEditor({ value, onChange }) {
           <Icon name="plus" />
           添加 SKU
         </button>
-        <span className="field-hint">已选 {picked.length} 条，第一条为主 SKU；每条 SKU 可以填各自的数量</span>
+        <span className="field-hint">已选 {picked.length} 条，第一条为主 SKU；折扣与实际金额填一个即可</span>
+        <span className="sku-total">
+          合计 <b>{formatMoney(total)}</b>
+        </span>
       </div>
     </div>
   );
 }
 
-const skuFieldHint = '一个项目可以配置多条 SKU，第一条作为主 SKU；每条 SKU 单独记录数量';
+const skuFieldHint = '标准价写死在系统里；填折扣自动算实际金额，填实际金额自动反算折扣，合计按各条小计汇总';
 
 export function ProjectForm({
   initial,
@@ -106,6 +204,8 @@ export function ProjectForm({
   lockCustomer = false,
 }) {
   const isSigned = initial?.status === 'won';
+  // 新建项目默认带上第一条 SKU（专业版，标准价已预填）；编辑时按已有明细回填
+  const initialSkus = initial ? skuEntriesOf(initial) : [];
   const [form, setForm] = useState({
     id: initial?.id || null,
     name: initial?.name || '',
@@ -114,7 +214,7 @@ export function ProjectForm({
     category: initial?.category || defaultCategory,
     contact: initial?.contact || '',
     expectedAmount: initial?.expectedAmount ?? 0,
-    skus: initial ? skuEntriesOf(initial) : [{ sku: SKUS[0], qty: 1 }],
+    skus: initialSkus.length ? initialSkus : [newSkuEntry(SKUS[0])],
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
     contractAmount: initial?.contractAmount ?? initial?.expectedAmount ?? 0,
@@ -129,6 +229,8 @@ export function ProjectForm({
   // 只选了 PS 人天服务 = 一次性交付的服务项目，不填订阅开始 / 到期
   const pickedSkus = form.skus.map((entry) => entry.sku).filter(Boolean);
   const serviceOnly = pickedSkus.length > 0 && pickedSkus.every((sku) => sku === SERVICE_SKU);
+  // 金额不手填：按各条 SKU 的实际金额 × 数量自动汇总
+  const total = skuTotalOf(form.skus);
 
   const onStartDateChange = (value) =>
     setForm((prev) => ({ ...prev, startDate: value, expiryDate: oneYearFrom(value) }));
@@ -137,12 +239,11 @@ export function ProjectForm({
 
   const submit = async (e) => {
     e.preventDefault();
-    const { skus, skuQty } = entriesToPayload(form.skus);
+    const { skus, skuQty, skuPrice, skuDiscount } = entriesToPayload(form.skus);
     if (!form.name.trim()) return setError('请填写项目名称');
     if (!skus.length) return setError('请选择 SKU');
-    if (Number(form.expectedAmount) <= 0) return setError('请填写预计成交金额');
+    if (total <= 0) return setError('请填写每条 SKU 的实际金额');
     if (isSigned) {
-      if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
       if (!serviceOnly) {
         if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
         if (form.startDate > form.expiryDate) return setError('订阅开始时间不能晚于到期时间');
@@ -167,8 +268,10 @@ export function ProjectForm({
         partnerId: form.partnerId || null,
         skus,
         skuQty,
-        expectedAmount: Number(form.expectedAmount),
-        contractAmount: isSigned ? Number(form.contractAmount) : null,
+        skuPrice,
+        skuDiscount,
+        expectedAmount: total,
+        contractAmount: isSigned ? total : null,
         startDate: isSigned && !serviceOnly ? form.startDate : null,
         expiryDate: isSigned ? (serviceOnly ? null : form.expiryDate) : form.expiryDate || null,
         category: isSigned ? form.category || null : form.category,
@@ -266,14 +369,12 @@ export function ProjectForm({
         <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
 
-      <Field label={isSigned ? '成交金额（元）' : '预计金额（元）'} required>
-        <input
-          type="number"
-          min="0"
-          step="any"
-          value={isSigned ? form.contractAmount : form.expectedAmount}
-          onChange={set(isSigned ? 'contractAmount' : 'expectedAmount')}
-        />
+      <Field
+        label={isSigned ? '成交金额（元）' : '预计金额（元）'}
+        required
+        hint="按各条 SKU 的实际金额 × 数量自动汇总，不需要手填"
+      >
+        <input className="amount-readonly" value={formatMoney(total)} readOnly tabIndex={-1} />
       </Field>
 
       {isSigned && !serviceOnly && (
@@ -311,15 +412,14 @@ export function ProjectForm({
 
 export function WinProjectForm({ project, onSave, onCancel }) {
   const [form, setForm] = useState({
-    contractAmount: project.contractAmount ?? project.expectedAmount ?? 0,
     startDate: project.startDate || todayStr(),
     expiryDate: project.expiryDate || oneYearFrom(todayStr()),
     skus: skuEntriesOf(project),
   });
   const [error, setError] = useState('');
-  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const pickedSkus = form.skus.map((entry) => entry.sku).filter(Boolean);
   const serviceOnly = pickedSkus.length > 0 && pickedSkus.every((sku) => sku === SERVICE_SKU);
+  const total = skuTotalOf(form.skus);
   const onStartDateChange = (value) =>
     setForm((prev) => ({ ...prev, startDate: value, expiryDate: oneYearFrom(value) }));
   const onExpiryDateChange = (value) =>
@@ -327,19 +427,22 @@ export function WinProjectForm({ project, onSave, onCancel }) {
 
   const submit = (e) => {
     e.preventDefault();
-    if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
-    const { skus, skuQty } = entriesToPayload(form.skus);
+    const { skus, skuQty, skuPrice, skuDiscount } = entriesToPayload(form.skus);
     if (!skus.length) return setError('请选择 SKU');
+    if (total <= 0) return setError('请填写每条 SKU 的实际金额');
     if (!serviceOnly) {
       if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
       if (form.startDate > form.expiryDate) return setError('订阅开始时间不能晚于到期时间');
     }
     onSave({
-      contractAmount: Number(form.contractAmount),
+      contractAmount: total,
+      expectedAmount: total,
       startDate: serviceOnly ? null : form.startDate,
       expiryDate: serviceOnly ? null : form.expiryDate,
       skus,
       skuQty,
+      skuPrice,
+      skuDiscount,
     });
   };
 
@@ -348,10 +451,10 @@ export function WinProjectForm({ project, onSave, onCancel }) {
       <div className="form-note">
         项目赢单后会进入「已签项目」，同时生成一笔成交记录。原项目记录不会删除。
       </div>
-      <Field label="成交金额（元）" required full>
-        <input type="number" min="0" step="any" value={form.contractAmount} onChange={set('contractAmount')} />
+      <Field label="成交金额（元）" required full hint="按各条 SKU 的实际金额 × 数量自动汇总，不需要手填">
+        <input className="amount-readonly" value={formatMoney(total)} readOnly tabIndex={-1} />
       </Field>
-      <Field label="SKU" required full>
+      <Field label="SKU" required full hint={skuFieldHint}>
         <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />
       </Field>
       {serviceOnly ? (

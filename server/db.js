@@ -157,6 +157,9 @@ ensureColumn('deals', 'projectId', 'TEXT');
 ensureColumn('deals', 'customerId', 'TEXT');
 // 每条 SKU 各自的个数（JSON，键为 SKU 名）；项目整体数量由各条 SKU 汇总得出，不再单独存
 ensureColumn('projects', 'skuQty', "TEXT NOT NULL DEFAULT '{}'");
+// 每条 SKU 的实际单价与折扣（JSON，键为 SKU 名）；标准价写死在前端常量里，不落库
+ensureColumn('projects', 'skuPrice', "TEXT NOT NULL DEFAULT '{}'");
+ensureColumn('projects', 'skuDiscount', "TEXT NOT NULL DEFAULT '{}'");
 // 历史字段清理：projects.quantity 已废弃（数量只存在 skuQty 里），老库启动时顺手删掉
 if (tableExists('projects') && columnsOf('projects').includes('quantity')) {
   try {

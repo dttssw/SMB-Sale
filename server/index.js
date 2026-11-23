@@ -98,10 +98,68 @@ function parseSkuQty(value, skus) {
   return out;
 }
 
+// 每条 SKU 的数值型字段（实际单价 / 折扣）：入参可能是对象或 JSON 文本，
+// 只保留当前项目里存在的 SKU；空值不进 map，表示这条还没报价。
+function parseSkuMap(value, skus, normalize) {
+  let map = {};
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    map = value;
+  } else if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) map = parsed;
+    } catch {
+      map = {};
+    }
+  }
+  const out = {};
+  for (const sku of skus) {
+    const normalized = normalize(map[sku]);
+    if (normalized !== undefined) out[sku] = normalized;
+  }
+  return out;
+}
+
+function parseSkuPrice(value, skus) {
+  return parseSkuMap(value, skus, (raw) => {
+    if (raw === '' || raw == null) return undefined;
+    const price = Number(raw);
+    return Number.isFinite(price) && price >= 0 ? Math.round(price * 100) / 100 : undefined;
+  });
+}
+
+function parseSkuDiscount(value, skus) {
+  return parseSkuMap(value, skus, (raw) => {
+    if (raw === '' || raw == null) return undefined;
+    const discount = Number(raw);
+    return Number.isFinite(discount) && discount >= 0 && discount <= 100
+      ? Math.round(discount * 100) / 100
+      : undefined;
+  });
+}
+
+// 项目金额 = Σ 每条 SKU 的实际金额 × 数量；只要有一条没报价就返回 null，交回调用方兜底
+function skuAmountTotal(skus, skuQty, skuPrice) {
+  if (!skus.length) return null;
+  let total = 0;
+  for (const sku of skus) {
+    const price = skuPrice[sku];
+    if (price == null) return null;
+    total += price * (skuQty[sku] || 1);
+  }
+  return Math.round(total * 100) / 100;
+}
+
 function withSkus(row) {
   if (!row) return row;
   const skus = parseSkus(row.skus);
-  return { ...row, skus, skuQty: parseSkuQty(row.skuQty, skus) };
+  return {
+    ...row,
+    skus,
+    skuQty: parseSkuQty(row.skuQty, skus),
+    skuPrice: parseSkuPrice(row.skuPrice, skus),
+    skuDiscount: parseSkuDiscount(row.skuDiscount, skus),
+  };
 }
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -132,7 +190,7 @@ function daysUntil(dateStr) {
 const PROJECT_SELECT = `
   SELECT
     p.id, p.name, p.customerId, p.partnerId, p.category, p.status, p.contact,
-    p.expectedAmount, p.contractAmount, p.skus, p.skuQty,
+    p.expectedAmount, p.contractAmount, p.skus, p.skuQty, p.skuPrice, p.skuDiscount,
     p.lastFollowUp, p.nextFollowUp, p.startDate, p.expiryDate,
     p.sourceProjectId, p.lostAt, p.watchedAt, p.createdAt, p.closedAt,
     c.name AS customerName,
@@ -183,15 +241,23 @@ function validateProjectPayload(input, existing = null) {
   if (!name) throw httpError(400, '请填写项目名称');
   if (status !== WON && !category) throw httpError(400, '进行中的项目必须选择 new 或 renew 类型');
 
-  const expectedAmount = num(input.expectedAmount ?? existing?.expectedAmount, 0);
-  if (expectedAmount < 0) throw httpError(400, '预计金额不能小于 0');
-
   const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
   const serviceOnly = isServiceOnly(skus);
+  const skuQty = parseSkuQty(input.skuQty !== undefined ? input.skuQty : existing?.skuQty, skus);
+  const skuPrice = parseSkuPrice(input.skuPrice !== undefined ? input.skuPrice : existing?.skuPrice, skus);
+  const skuDiscount = parseSkuDiscount(
+    input.skuDiscount !== undefined ? input.skuDiscount : existing?.skuDiscount,
+    skus
+  );
+  // 金额以 SKU 明细为准（Σ 实际金额 × 数量）；老项目没有明细金额时才回退到传入的总额
+  const skuTotal = skuAmountTotal(skus, skuQty, skuPrice);
+  const expectedAmount = skuTotal != null ? skuTotal : num(input.expectedAmount ?? existing?.expectedAmount, 0);
+  if (expectedAmount < 0) throw httpError(400, '预计金额不能小于 0');
 
   let contractAmount =
     input.contractAmount !== undefined ? input.contractAmount : existing?.contractAmount;
   contractAmount = contractAmount == null || contractAmount === '' ? null : num(contractAmount, NaN);
+  if (skuTotal != null) contractAmount = skuTotal;
   const startDate = trim(input.startDate ?? existing?.startDate) || null;
   const expiryDate = trim(input.expiryDate ?? existing?.expiryDate) || null;
   if (status === WON) {
@@ -217,7 +283,9 @@ function validateProjectPayload(input, existing = null) {
         startDate: null,
         expiryDate: null,
         skus,
-        skuQty: parseSkuQty(input.skuQty !== undefined ? input.skuQty : existing?.skuQty, skus),
+        skuQty,
+        skuPrice,
+        skuDiscount,
         lastFollowUp: trim(input.lastFollowUp ?? existing?.lastFollowUp) || null,
         nextFollowUp: trim(input.nextFollowUp ?? existing?.nextFollowUp) || null,
       };
@@ -236,7 +304,9 @@ function validateProjectPayload(input, existing = null) {
     startDate: status === WON && !serviceOnly ? startDate : null,
     expiryDate: status === WON && serviceOnly ? null : expiryDate,
     skus,
-    skuQty: parseSkuQty(input.skuQty !== undefined ? input.skuQty : existing?.skuQty, skus),
+    skuQty,
+    skuPrice,
+    skuDiscount,
     lastFollowUp: trim(input.lastFollowUp ?? existing?.lastFollowUp) || null,
     nextFollowUp:
       status === WATCHING ? null : trim(input.nextFollowUp ?? existing?.nextFollowUp) || null,
@@ -250,11 +320,13 @@ function insertProject(input, forced = {}) {
   db.prepare(`
     INSERT INTO projects (
       id, name, customerId, partnerId, category, status, contact,
-      expectedAmount, contractAmount, skus, skuQty, lastFollowUp, nextFollowUp,
+      expectedAmount, contractAmount, skus, skuQty, skuPrice, skuDiscount,
+      lastFollowUp, nextFollowUp,
       startDate, expiryDate, sourceProjectId, lostAt, watchedAt, closedAt, createdAt
     ) VALUES (
       @id, @name, @customerId, @partnerId, @category, @status, @contact,
-      @expectedAmount, @contractAmount, @skus, @skuQty, @lastFollowUp, @nextFollowUp,
+      @expectedAmount, @contractAmount, @skus, @skuQty, @skuPrice, @skuDiscount,
+      @lastFollowUp, @nextFollowUp,
       @startDate, @expiryDate, @sourceProjectId, NULL, NULL, NULL, @createdAt
     )
   `).run({
@@ -262,6 +334,8 @@ function insertProject(input, forced = {}) {
     id,
     skus: JSON.stringify(row.skus),
     skuQty: JSON.stringify(row.skuQty || {}),
+    skuPrice: JSON.stringify(row.skuPrice || {}),
+    skuDiscount: JSON.stringify(row.skuDiscount || {}),
     sourceProjectId: trim(forced.sourceProjectId) || null,
     createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
   });
@@ -349,6 +423,8 @@ function syncRenewals() {
           expectedAmount: project.contractAmount || project.expectedAmount || 0,
           skus,
           skuQty: parseSkuQty(project.skuQty, skus),
+          skuPrice: parseSkuPrice(project.skuPrice, skus),
+          skuDiscount: parseSkuDiscount(project.skuDiscount, skus),
           lastFollowUp: '',
           nextFollowUp: '',
         },
@@ -693,6 +769,8 @@ app.put('/api/projects/:id', (req, res, next) => {
         contractAmount = @contractAmount,
         skus = @skus,
         skuQty = @skuQty,
+        skuPrice = @skuPrice,
+        skuDiscount = @skuDiscount,
         lastFollowUp = @lastFollowUp,
         nextFollowUp = @nextFollowUp,
         startDate = @startDate,
@@ -703,6 +781,8 @@ app.put('/api/projects/:id', (req, res, next) => {
       id: existing.id,
       skus: JSON.stringify(row.skus),
       skuQty: JSON.stringify(row.skuQty || {}),
+      skuPrice: JSON.stringify(row.skuPrice || {}),
+      skuDiscount: JSON.stringify(row.skuDiscount || {}),
     });
     if (existing.status === WON) {
       db.prepare(`UPDATE deals SET amount = ? WHERE projectId = ?`).run(
@@ -741,17 +821,24 @@ app.post('/api/projects/:id/win', (req, res, next) => {
     if (existing.status === WATCHING) throw httpError(409, '长期观察项目需先恢复跟进后才能赢单');
 
     const body = req.body || {};
-    const amount = num(body.contractAmount, 0);
     const startDate = trim(body.startDate);
     const expiryDate = trim(body.expiryDate);
     const skus = body.skus !== undefined ? parseSkus(body.skus) : parseSkus(existing.skus);
     const serviceOnly = isServiceOnly(skus);
+    const skuQty = parseSkuQty(body.skuQty !== undefined ? body.skuQty : existing.skuQty, skus);
+    const skuPrice = parseSkuPrice(body.skuPrice !== undefined ? body.skuPrice : existing.skuPrice, skus);
+    const skuDiscount = parseSkuDiscount(
+      body.skuDiscount !== undefined ? body.skuDiscount : existing.skuDiscount,
+      skus
+    );
+    // 成交金额优先按 SKU 明细汇总，老项目没有明细金额时才用传入值
+    const skuTotal = skuAmountTotal(skus, skuQty, skuPrice);
+    const amount = skuTotal != null ? skuTotal : num(body.contractAmount, 0);
     if (amount <= 0) throw httpError(400, '成交金额必须大于 0');
     if (!serviceOnly) {
       if (!startDate || !expiryDate) throw httpError(400, '请选择订阅开始和到期时间');
       if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
     }
-    const skuQty = parseSkuQty(body.skuQty !== undefined ? body.skuQty : existing.skuQty, skus);
 
     const dealId = db.transaction(() => {
       db.prepare(`
@@ -762,6 +849,8 @@ app.post('/api/projects/:id/win', (req, res, next) => {
           expiryDate = ?,
           skus = ?,
           skuQty = ?,
+          skuPrice = ?,
+          skuDiscount = ?,
           nextFollowUp = NULL,
           lostAt = NULL,
           watchedAt = NULL,
@@ -773,6 +862,8 @@ app.post('/api/projects/:id/win', (req, res, next) => {
         serviceOnly ? null : expiryDate,
         JSON.stringify(skus),
         JSON.stringify(skuQty),
+        JSON.stringify(skuPrice),
+        JSON.stringify(skuDiscount),
         existing.id
       );
 
@@ -828,6 +919,9 @@ app.post('/api/projects/:id/renew', (req, res, next) => {
             : source.contractAmount || source.expectedAmount || 0,
         skus,
         skuQty: body.skuQty !== undefined ? body.skuQty : parseSkuQty(source.skuQty, skus),
+        skuPrice: body.skuPrice !== undefined ? body.skuPrice : parseSkuPrice(source.skuPrice, skus),
+        skuDiscount:
+          body.skuDiscount !== undefined ? body.skuDiscount : parseSkuDiscount(source.skuDiscount, skus),
         lastFollowUp: body.lastFollowUp || '',
         nextFollowUp: body.nextFollowUp || '',
         expiryDate: body.expiryDate || source.expiryDate,
