@@ -35,3 +35,45 @@ export function skusOf(record) {
   const plan = String(record?.plan ?? '').trim();
   return plan ? [plan] : [];
 }
+
+// 每条 SKU 的数量：skuQty 可能是对象或 JSON 文本，取不到就按 1 计
+export function skuQtyOf(record) {
+  const raw = record?.skuQty;
+  let map = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) map = raw;
+  else if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) map = parsed;
+    } catch {
+      map = {};
+    }
+  }
+  const out = {};
+  for (const sku of skusOf(record)) {
+    const qty = Number(map[sku]);
+    out[sku] = Number.isFinite(qty) && qty > 0 ? Math.max(1, Math.round(qty)) : 1;
+  }
+  return out;
+}
+
+// 表单用：[{ sku, qty }]，与详情展示、接口入参保持同一份顺序
+export function skuEntriesOf(record) {
+  const qty = skuQtyOf(record);
+  return skusOf(record).map((sku) => ({ sku, qty: qty[sku] }));
+}
+
+// 表单提交用：去重、收敛数量，拆成接口需要的 skus / skuQty 两个字段
+export function entriesToPayload(entries) {
+  const skus = [];
+  const skuQty = {};
+  for (const entry of entries || []) {
+    const sku = String(entry?.sku ?? '').trim();
+    if (!sku || skus.includes(sku)) continue;
+    const qty = Number(entry?.qty);
+    skus.push(sku);
+    skuQty[sku] = Number.isFinite(qty) && qty > 0 ? Math.max(1, Math.round(qty)) : 1;
+  }
+  return { skus, skuQty };
+}
+

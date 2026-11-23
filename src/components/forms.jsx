@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { oneYearBefore, oneYearFrom, todayStr } from '../utils/date.js';
-import { cleanSkus, skusOf } from '../utils/sku.js';
+import { entriesToPayload, skuEntriesOf } from '../utils/sku.js';
 import { SKUS } from '../data/constants.js';
 import DatePicker from './DatePicker.jsx';
 import Icon from './icons.jsx';
@@ -32,19 +32,23 @@ function Actions({ onCancel }) {
 }
 
 function SkuEditor({ value, onChange }) {
-  const list = value && value.length ? value : [''];
-  const picked = list.filter(Boolean);
-  const update = (index, sku) => onChange(list.map((v, i) => (i === index ? sku : v)));
-  const add = () => onChange([...list, '']);
+  const list = value && value.length ? value : [{ sku: '', qty: 1 }];
+  const picked = list.filter((entry) => entry.sku);
+  const update = (index, patch) => onChange(list.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
+  const add = () => onChange([...list, { sku: '', qty: 1 }]);
   const remove = (index) => onChange(list.filter((_, i) => i !== index));
 
   return (
     <div className="sku-editor">
-      {list.map((sku, index) => {
-        const others = list.filter((v, i) => i !== index && v);
+      {list.map((entry, index) => {
+        const others = list.filter((item, i) => i !== index && item.sku).map((item) => item.sku);
         return (
           <div className="sku-row" key={index}>
-            <select value={sku} onChange={(e) => update(index, e.target.value)} aria-label={`SKU ${index + 1}`}>
+            <select
+              value={entry.sku}
+              onChange={(e) => update(index, { sku: e.target.value })}
+              aria-label={`SKU ${index + 1}`}
+            >
               <option value="">{index === 0 ? '请选择 SKU' : '请选择 SKU（可选）'}</option>
               {SKUS.map((s) => (
                 <option key={s} value={s} disabled={others.includes(s)}>
@@ -52,6 +56,18 @@ function SkuEditor({ value, onChange }) {
                 </option>
               ))}
             </select>
+            <span className="sku-qty-wrap">
+              <input
+                type="number"
+                min="1"
+                step="1"
+                className="sku-qty"
+                value={entry.qty ?? 1}
+                onChange={(e) => update(index, { qty: e.target.value })}
+                aria-label={`SKU ${index + 1} 的数量`}
+              />
+              <span className="sku-qty-unit">份</span>
+            </span>
             {list.length > 1 && (
               <button type="button" className="btn btn-ghost btn-sm sku-remove" onClick={() => remove(index)}>
                 移除
@@ -70,13 +86,13 @@ function SkuEditor({ value, onChange }) {
           <Icon name="plus" />
           添加 SKU
         </button>
-        <span className="field-hint">已选 {picked.length} 条，第一条为主 SKU</span>
+        <span className="field-hint">已选 {picked.length} 条，第一条为主 SKU；每条 SKU 可以填各自的数量</span>
       </div>
     </div>
   );
 }
 
-const skuFieldHint = '一个项目可以配置多条 SKU，第一条作为主 SKU';
+const skuFieldHint = '一个项目可以配置多条 SKU，第一条作为主 SKU；每条 SKU 单独记录数量';
 
 export function ProjectForm({
   initial,
@@ -98,7 +114,8 @@ export function ProjectForm({
     category: initial?.category || defaultCategory,
     contact: initial?.contact || '',
     expectedAmount: initial?.expectedAmount ?? 0,
-    skus: initial ? skusOf(initial) : [SKUS[0]],
+    quantity: initial?.quantity ?? 1,
+    skus: initial ? skuEntriesOf(initial) : [{ sku: SKUS[0], qty: 1 }],
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
     contractAmount: initial?.contractAmount ?? initial?.expectedAmount ?? 0,
@@ -118,9 +135,10 @@ export function ProjectForm({
 
   const submit = async (e) => {
     e.preventDefault();
-    const skus = cleanSkus(form.skus);
+    const { skus, skuQty } = entriesToPayload(form.skus);
     if (!form.name.trim()) return setError('请填写项目名称');
     if (!skus.length) return setError('请选择 SKU');
+    if (Number(form.quantity) < 1) return setError('项目数量至少为 1');
     if (Number(form.expectedAmount) <= 0) return setError('请填写预计成交金额');
     if (isSigned) {
       if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
@@ -145,6 +163,8 @@ export function ProjectForm({
         customerId,
         partnerId: form.partnerId || null,
         skus,
+        skuQty,
+        quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
         expectedAmount: Number(form.expectedAmount),
         contractAmount: isSigned ? Number(form.contractAmount) : null,
         startDate: isSigned ? form.startDate : null,
@@ -254,6 +274,16 @@ export function ProjectForm({
         />
       </Field>
 
+      <Field label="项目数量" required hint="该项目整体的购买个数，例如用户席位 50">
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={form.quantity}
+          onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+        />
+      </Field>
+
       {isSigned && (
         <>
           <Field label="订阅开始时间" required>
@@ -285,9 +315,10 @@ export function ProjectForm({
 export function WinProjectForm({ project, onSave, onCancel }) {
   const [form, setForm] = useState({
     contractAmount: project.contractAmount ?? project.expectedAmount ?? 0,
+    quantity: project.quantity ?? 1,
     startDate: project.startDate || todayStr(),
     expiryDate: project.expiryDate || oneYearFrom(todayStr()),
-    skus: skusOf(project),
+    skus: skuEntriesOf(project),
   });
   const [error, setError] = useState('');
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -299,14 +330,17 @@ export function WinProjectForm({ project, onSave, onCancel }) {
   const submit = (e) => {
     e.preventDefault();
     if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
+    if (Number(form.quantity) < 1) return setError('项目数量至少为 1');
     if (!form.startDate || !form.expiryDate) return setError('请选择订阅开始和到期时间');
-    const skus = cleanSkus(form.skus);
+    const { skus, skuQty } = entriesToPayload(form.skus);
     if (!skus.length) return setError('请选择 SKU');
     onSave({
       contractAmount: Number(form.contractAmount),
+      quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
       startDate: form.startDate,
       expiryDate: form.expiryDate,
       skus,
+      skuQty,
     });
   };
 
@@ -317,6 +351,15 @@ export function WinProjectForm({ project, onSave, onCancel }) {
       </div>
       <Field label="成交金额（元）" required full>
         <input type="number" min="0" step="any" value={form.contractAmount} onChange={set('contractAmount')} />
+      </Field>
+      <Field label="项目数量" required hint="该项目整体的购买个数">
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={form.quantity}
+          onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+        />
       </Field>
       <Field label="SKU" required full>
         <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />

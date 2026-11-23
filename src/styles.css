@@ -404,6 +404,24 @@ button, input, select, textarea { font-family: inherit; }
 /* SKU 标签组（客户详情 / 在约客户列表） */
 .sku-tags { display: inline-flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .sku-more { color: var(--fg-dim); }
+/* 标签里的数量：弱化处理，别抢 SKU 名 */
+.sku-qty-tag { font-style: normal; font-weight: 500; color: var(--fg-dim); }
+/* 每条 SKU 的数量输入：SKU 下拉吃掉剩余宽度，数量固定 64px
+   （选择器要压过 .field input 的 width:100%） */
+.sku-qty-wrap { display: inline-flex; align-items: center; gap: var(--s1); flex-shrink: 0; }
+.sku-row input.sku-qty {
+  width: 64px; height: 32px; padding: 0 var(--s2);
+  color: var(--fg); background: var(--bg); text-align: right;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  font-size: var(--fs-sm); outline: none;
+  transition: border-color var(--t-fast) var(--ease-out), box-shadow var(--t-fast) var(--ease-out);
+}
+.sku-row input.sku-qty:focus { border-color: var(--line-strong); box-shadow: 0 0 0 2px var(--focus-ring); }
+/* 64px 装不下浏览器默认的上下箭头，直接去掉（键盘上下键仍然可调） */
+.sku-row input.sku-qty { appearance: textfield; -moz-appearance: textfield; }
+.sku-row input.sku-qty::-webkit-outer-spin-button,
+.sku-row input.sku-qty::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.sku-qty-unit { font-size: var(--fs-xs); color: var(--fg-dim); }
 
 .datepicker { display: flex; align-items: center; gap: var(--s2); width: 100%; }
 .datepicker select { flex: 1 1 0; min-width: 0; padding: 0 var(--s1); }
@@ -417,22 +435,17 @@ button, input, select, textarea { font-family: inherit; }
 }
 .datepicker-clear:hover { background: var(--surface-2); color: var(--fg); }
 
-/* 更多操作下拉（客户详情） */
-.menu { position: relative; display: inline-block; }
-.menu-panel {
-  position: absolute; right: 0; top: calc(100% + var(--s1)); z-index: 20;
-  min-width: 128px; padding: var(--s1);
-  background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
-}
-.menu-item {
-  display: flex; align-items: center; width: 100%; height: 32px; padding: 0 var(--s2);
-  border: none; border-radius: var(--r-xs); background: transparent;
-  color: var(--fg); font-size: var(--fs-sm); text-align: left; cursor: pointer;
-  transition: background-color var(--t-fast) var(--ease-out);
-}
-.menu-item:hover { background: var(--surface); }
-.menu-item.danger { color: var(--danger); }
-.menu-item + .menu-item { margin-top: var(--s1); }
+/* 详情页操作按钮组：编辑 / 赢单 / 续约 / 状态变更全部平铺，不再收进「更多」二级菜单；
+   删除靠右单独放置，视觉上与常规操作分开 */
+.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); padding: var(--s4) var(--s5) 0; }
+.detail-actions .btn-danger { margin-left: auto; }
+.btn-danger { border-color: var(--line-strong); color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: rgba(229, 83, 75, .12); border-color: var(--danger); }
+.btn-danger:active:not(:disabled) { background: rgba(229, 83, 75, .2); }
+.btn-danger-solid { background: var(--danger); color: #fff; }
+.btn-danger-solid:hover:not(:disabled) { background: #EF6A62; }
+.btn-danger-solid:active:not(:disabled) { background: #C9433C; }
+.confirm-text { font-size: var(--fs-md); line-height: var(--lh-body); color: var(--fg); }
 
 /* ---------- 10. 表格 ---------- */
 .table-wrap { overflow-x: auto; }
@@ -617,7 +630,7 @@ button, input, select, textarea { font-family: inherit; }
 .customer-detail { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .customer-detail > .lost-hint, .customer-detail > .watch-hint { margin: var(--s5) var(--s5) 0; }
 .customer-detail-grid { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); flex: 1; min-height: 0; }
-/* 左栏：客户名 + 状态标签 + 「⋯ 更多」固定在顶部，档案字段在下方自己的滚动区里 */
+/* 左栏：客户名 + 状态标签固定在顶部（操作按钮已上移到详情页顶部的按钮组），档案字段在下方自己的滚动区里 */
 .detail-aside { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
 .detail-aside-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3);
@@ -661,7 +674,7 @@ button, input, select, textarea { font-family: inherit; }
 .note-day-head { position: sticky; top: 0; z-index: 1; background: var(--surface); }
 .note-edit { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s1); }
 .note-edit-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
-/* 流失（lost）提示：说明档案与备注保持原样、可从「⋯ 更多」恢复 */
+/* 流失（lost）提示：说明档案与备注保持原样、可点顶部「恢复为进行中」回来 */
 .lost-hint {
   display: flex; align-items: flex-start; gap: var(--s2);
   padding: var(--s3) var(--s4);
@@ -670,7 +683,7 @@ button, input, select, textarea { font-family: inherit; }
   font-size: var(--fs-xs); line-height: var(--lh-dense); color: var(--fg-muted);
 }
 .lost-hint svg { flex-shrink: 0; margin-top: 1px; color: var(--danger); }
-/* 长期观察提示：说明不设定时跟进、档案与备注保持原样，可从「⋯ 更多 → 恢复跟进」回到跟进列表 */
+/* 长期观察提示：说明不设定时跟进、档案与备注保持原样，可点顶部「恢复为进行中」回到跟进列表 */
 .watch-hint {
   display: flex; align-items: flex-start; gap: var(--s2);
   padding: var(--s3) var(--s4);

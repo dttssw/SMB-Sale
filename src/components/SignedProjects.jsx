@@ -6,7 +6,7 @@ import useFitPaging from '../hooks/useFitPaging.js';
 import { useViewport } from '../hooks/useViewportFit.js';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { skusOf } from '../utils/sku.js';
+import { skuEntriesOf } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 const FALLBACK_ROWS = 8;
@@ -85,6 +85,7 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
               <th className="col-opt">合作伙伴</th>
               <th className="col-opt">类型</th>
               <th className="col-opt">SKU</th>
+              <th className="num col-opt">数量</th>
               <th className="num">成交金额</th>
               <th className="num">订阅周期</th>
               <th>状态</th>
@@ -94,7 +95,7 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
           <tbody>
             {paged.map((project) => {
               const status = statusOf(project.expiryDate);
-              const skus = skusOf(project);
+              const entries = skuEntriesOf(project);
               return (
                 <tr key={project.id} className="row-clickable" onClick={(e) => handleRowClick(e, project)}>
                   <td>
@@ -116,14 +117,21 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
                   <td className="col-opt">{project.category === 'renew' ? '续约' : project.category === 'new' ? '新签' : '历史'}</td>
                   <td className="col-opt">
                     <span className="sku-tags">
-                      <span className="plan-tag">{skus[0] || '—'}</span>
-                      {skus.length > 1 && (
-                        <span className="plan-tag sku-more" title={skus.join('、')}>
-                          +{skus.length - 1}
+                      <span className="plan-tag">
+                        {entries[0]?.sku || '—'}
+                        {entries[0] && <i className="sku-qty-tag">×{entries[0].qty}</i>}
+                      </span>
+                      {entries.length > 1 && (
+                        <span
+                          className="plan-tag sku-more"
+                          title={entries.map((entry) => `${entry.sku} ×${entry.qty}`).join('、')}
+                        >
+                          +{entries.length - 1}
                         </span>
                       )}
                     </span>
                   </td>
+                  <td className="num col-opt">{project.quantity ?? 1}</td>
                   <td className="num strong">{formatMoney(project.contractAmount)}</td>
                   <td className="num">
                     {formatDate(project.startDate)}
@@ -150,7 +158,7 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={8} className="empty">
+                <td colSpan={9} className="empty">
                   <div className="empty-state">
                     <p>暂无已签项目，项目赢单后会自动进入这里</p>
                   </div>

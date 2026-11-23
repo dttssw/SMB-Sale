@@ -18,6 +18,7 @@ import RevenuePanel from './components/RevenuePanel.jsx';
 import WorkJournal from './components/WorkJournal.jsx';
 import MaterialLibrary from './components/MaterialLibrary.jsx';
 import Modal from './components/Modal.jsx';
+import ConfirmDialog from './components/ConfirmDialog.jsx';
 import Icon from './components/icons.jsx';
 import { ProjectForm, WinProjectForm, CustomerForm, PartnerForm, DealForm } from './components/forms.jsx';
 import { ProjectDetail, CustomerDetail, PartnerDetail } from './components/Details.jsx';
@@ -75,6 +76,7 @@ export default function App() {
   const materialsDb = useDbData('materials');
   const worklogsDb = useDbData('worklogs');
   const [modal, setModalState] = useState(null);
+  const [confirm, setConfirm] = useState(null);
   const [actionError, setActionError] = useState('');
   const [actionNotice, setActionNotice] = useState('');
   const [nav, setNav] = useState(readSection);
@@ -254,52 +256,62 @@ export default function App() {
     setActionNotice(`已从「${source.name}」创建独立续约项目，原已签项目保留`);
   };
 
-  const changeStatus = async (project, action, confirmText, notice) => {
-    if (!window.confirm(confirmText)) return;
-    try {
-      await api.markProject(project.id, action);
-      await reloadCore();
-      setModal(null);
-      setActionNotice(notice);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
+  // 所有删除 / 状态变更都先弹应用内确认框，确认后才真正调用接口
+  const changeStatus = (project, action, confirmText, notice) =>
+    setConfirm({
+      title: action === 'lost' ? '标记为 Lost' : action === 'watch' ? '转为长期观察' : '恢复为进行中',
+      message: confirmText,
+      confirmText: '确认',
+      danger: action === 'lost',
+      onConfirm: async () => {
+        await api.markProject(project.id, action);
+        await reloadCore();
+        setModal(null);
+        setConfirm(null);
+        setActionNotice(notice);
+      },
+    });
 
-  const deleteProject = async (project) => {
-    if (!window.confirm(`确认删除项目「${project.name}」？客户主档和其他项目不会删除。`)) return;
-    try {
-      await api.removeProject(project.id);
-      await reloadCore();
-      setModal(null);
-      setActionNotice(`项目「${project.name}」已删除`);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
+  const deleteProject = (project) =>
+    setConfirm({
+      title: '删除项目',
+      message: `确认删除项目「${project.name}」？删除后不可恢复，客户主档和其他项目不受影响。`,
+      confirmText: '删除项目',
+      onConfirm: async () => {
+        await api.removeProject(project.id);
+        await reloadCore();
+        setModal(null);
+        setConfirm(null);
+        setActionNotice(`项目「${project.name}」已删除`);
+      },
+    });
 
-  const deleteCustomer = async (customer) => {
-    if (!window.confirm(`确认删除客户「${customer.name}」？有项目时系统会阻止删除。`)) return;
-    try {
-      await customersDb.remove(customer.id);
-      setModal(null);
-      setActionNotice(`客户「${customer.name}」已删除`);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
+  const deleteCustomer = (customer) =>
+    setConfirm({
+      title: '删除客户',
+      message: `确认删除客户「${customer.name}」？该客户名下还有项目时系统会阻止删除。`,
+      confirmText: '删除客户',
+      onConfirm: async () => {
+        await customersDb.remove(customer.id);
+        setModal(null);
+        setConfirm(null);
+        setActionNotice(`客户「${customer.name}」已删除`);
+      },
+    });
 
-  const deletePartner = async (partner) => {
-    if (!window.confirm(`确认删除合作伙伴「${partner.name}」？关联项目会保留，但不再关联该合作伙伴。`)) return;
-    try {
-      await partnersDb.remove(partner.id);
-      await projectsDb.reload();
-      setModal(null);
-      setActionNotice(`合作伙伴「${partner.name}」已删除`);
-    } catch (err) {
-      setActionError(err.message);
-    }
-  };
+  const deletePartner = (partner) =>
+    setConfirm({
+      title: '删除合作伙伴',
+      message: `确认删除合作伙伴「${partner.name}」？关联项目会保留，但不再关联该合作伙伴。`,
+      confirmText: '删除合作伙伴',
+      onConfirm: async () => {
+        await partnersDb.remove(partner.id);
+        await projectsDb.reload();
+        setModal(null);
+        setConfirm(null);
+        setActionNotice(`合作伙伴「${partner.name}」已删除`);
+      },
+    });
 
   const saveDeal = async (data) => {
     await dealsDb.create({ ...data, id: uid() });
@@ -688,6 +700,8 @@ export default function App() {
           )}
         </Modal>
       )}
+
+      {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
     </>
   );
 }

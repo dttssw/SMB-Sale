@@ -155,6 +155,9 @@ function ensureColumn(table, name, definition) {
 ensureColumn('notes', 'projectId', 'TEXT');
 ensureColumn('deals', 'projectId', 'TEXT');
 ensureColumn('deals', 'customerId', 'TEXT');
+// 项目「数量」：项目整体购买的个数；skuQty 存每条 SKU 各自的个数（JSON，键为 SKU 名）
+ensureColumn('projects', 'quantity', 'INTEGER NOT NULL DEFAULT 1');
+ensureColumn('projects', 'skuQty', "TEXT NOT NULL DEFAULT '{}'");
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_notes_project ON notes(projectId);
   CREATE INDEX IF NOT EXISTS idx_deals_project ON deals(projectId);

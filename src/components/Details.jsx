@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import Badge from './Badge.jsx';
 import Icon from './icons.jsx';
 import NotesSection from './NotesSection.jsx';
 import { daysUntil, formatDate } from '../utils/date.js';
 import { formatMoney } from '../utils/format.js';
-import { skusOf } from '../utils/sku.js';
+import { skuEntriesOf } from '../utils/sku.js';
 import { RENEW_WINDOW_DAYS } from '../data/constants.js';
 
 function Fact({ label, value }) {
@@ -34,45 +33,38 @@ function projectExpiryBadge(project) {
 }
 
 function SkuValue({ project }) {
-  const skus = skusOf(project);
-  if (!skus.length) return '—';
+  const entries = skuEntriesOf(project);
+  if (!entries.length) return '—';
   return (
     <span className="sku-tags">
-      {skus.map((sku) => (
+      {entries.map(({ sku, qty }) => (
         <span className="plan-tag" key={sku}>
           {sku}
+          <i className="sku-qty-tag">×{qty}</i>
         </span>
       ))}
     </span>
   );
 }
 
-function DetailMenu({ items }) {
-  const [open, setOpen] = useState(false);
+/**
+ * 操作按钮组：全部平铺在详情顶部，不再塞进「⋯ 更多」二级菜单。
+ * 危险操作（删除）靠右单独放置，点击后仍走二次确认。
+ */
+function DetailActions({ items }) {
   if (!items.length) return null;
   return (
-    <div className="menu">
-      <button type="button" className="btn btn-ghost" onClick={() => setOpen((v) => !v)}>
-        <Icon name="more" />
-        更多
-      </button>
-      {open && (
-        <div className="menu-panel">
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className={`menu-item${item.danger ? ' danger' : ''}`}
-              onClick={() => {
-                setOpen(false);
-                item.onClick();
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="detail-actions">
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          className={`btn btn-sm ${item.danger ? 'btn-danger' : item.primary ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={item.onClick}
+        >
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -99,14 +91,14 @@ export function ProjectDetail({
   const expiry = projectExpiryBadge(project);
   const actions = [
     { label: '编辑项目', onClick: onEdit },
-    ...(project.status === 'active' ? [{ label: '赢单 / 签约', onClick: onWin }] : []),
-    ...(project.status === 'won' ? [{ label: '新建续约项目', onClick: onRenew }] : []),
+    ...(project.status === 'active' ? [{ label: '赢单 / 签约', primary: true, onClick: onWin }] : []),
+    ...(project.status === 'won' ? [{ label: '新建续约项目', primary: true, onClick: onRenew }] : []),
     ...(project.status === 'active' ? [{ label: '转为长期观察', onClick: onWatch }] : []),
     ...(['active', 'watching'].includes(project.status) && onLost
       ? [{ label: '标记为 Lost', onClick: onLost }]
       : []),
     ...(['lost', 'watching'].includes(project.status) && onRestore
-      ? [{ label: '恢复为进行中', onClick: onRestore }]
+      ? [{ label: '恢复为进行中', primary: true, onClick: onRestore }]
       : []),
     { label: '删除项目', danger: true, onClick: onDelete },
   ];
@@ -117,6 +109,8 @@ export function ProjectDetail({
         <Icon name={project.status === 'lost' ? 'alert' : project.status === 'won' ? 'check' : 'target'} />
         <span>{statusCopy[project.status]}</span>
       </div>
+
+      <DetailActions items={actions} />
 
       <div className="customer-detail-grid">
         <aside className="detail-aside" aria-label="项目档案">
@@ -131,7 +125,6 @@ export function ProjectDetail({
                 {expiry && <Badge tone={expiry.tone}>{expiry.label}</Badge>}
               </div>
             </div>
-            <DetailMenu items={actions} />
           </div>
 
           <div className="detail-aside-scroll">
@@ -147,6 +140,7 @@ export function ProjectDetail({
               <Fact label="合作伙伴" value={project.partnerName || '—'} />
               <Fact label="项目联系人" value={project.contact || '—'} />
               <Fact label="SKU" value={<SkuValue project={project} />} />
+              <Fact label="项目数量" value={`${project.quantity ?? 1}`} />
               <Fact
                 label={project.status === 'won' ? '成交金额' : '预计金额'}
                 value={`${formatMoney(project.status === 'won' ? project.contractAmount : project.expectedAmount)} 元`}
@@ -205,6 +199,7 @@ export function CustomerDetail({
         <Icon name="users" />
         <span>客户只保存主档信息；这里的所有项目互不影响，一个客户可以同时有多个新签和续约项目</span>
       </div>
+      <DetailActions items={actions} />
       <div className="customer-detail-grid">
         <aside className="detail-aside" aria-label="客户档案">
           <div className="detail-aside-head">
@@ -218,7 +213,6 @@ export function CustomerDetail({
                 {lost.length > 0 && <Badge tone="danger">Lost {lost.length}</Badge>}
               </div>
             </div>
-            <DetailMenu items={actions} />
           </div>
           <div className="detail-aside-scroll">
             <dl className="detail-facts">
@@ -267,6 +261,7 @@ export function PartnerDetail({ partner, projects, onEdit, onDelete, onViewProje
   ];
   return (
     <div className="customer-detail">
+      <DetailActions items={actions} />
       <div className="customer-detail-grid">
         <aside className="detail-aside" aria-label="合作伙伴档案">
           <div className="detail-aside-head">
@@ -278,7 +273,6 @@ export function PartnerDetail({ partner, projects, onEdit, onDelete, onViewProje
                 <Badge tone="info">关联项目 {projects.length}</Badge>
               </div>
             </div>
-            <DetailMenu items={actions} />
           </div>
           <div className="detail-aside-scroll">
             <p className="field-hint">合作伙伴联系人请逐条写在右侧备注中；删除合作伙伴不会删除关联项目。</p>
