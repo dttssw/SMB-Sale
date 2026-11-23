@@ -393,6 +393,29 @@ function migrateLegacyTables() {
   return { contracts: contracts.length, prospects: prospects.length };
 }
 
+/**
+ * 历史 deals 只有客户名 / customerId，没有 projectId（旧模型里成交是独立记的）。
+ * 这里按「同客户 + 金额一致 + 该客户只有一个已签项目 + 该项目还没绑成交」做保守回填：
+ * 四个条件缺一就不动，宁可留空也不猜错；幂等，每次启动跑一遍，已绑定的不会被重复处理。
+ */
+function backfillDealProjects() {
+  const pending = db
+    .prepare(`SELECT id, customerId, amount FROM deals WHERE (projectId IS NULL OR projectId = '') AND customerId IS NOT NULL AND customerId != ''`)
+    .all();
+  let filled = 0;
+  for (const deal of pending) {
+    const candidates = db
+      .prepare(`SELECT id FROM projects WHERE status = 'won' AND customerId = ? AND contractAmount = ?`)
+      .all(deal.customerId, deal.amount);
+    if (candidates.length !== 1) continue;
+    const target = candidates[0].id;
+    if (db.prepare(`SELECT 1 FROM deals WHERE projectId = ?`).get(target)) continue;
+    db.prepare(`UPDATE deals SET projectId = ? WHERE id = ?`).run(target, deal.id);
+    filled += 1;
+  }
+  return filled;
+}
+
 const migrated = db.prepare(`SELECT value FROM schema_meta WHERE key = 'projects_migrated_v1'`).get();
 if (!migrated) {
   const run = db.transaction(() => {
@@ -407,3 +430,6 @@ if (!migrated) {
     console.log(`✅ 已迁移旧业务数据：合同 ${summary.contracts} 条、跟进 ${summary.prospects} 条 → projects`);
   }
 }
+
+const filledDeals = backfillDealProjects();
+if (filledDeals) console.log(`✅ 已把 ${filledDeals} 条历史成交回填到对应已签项目`);
