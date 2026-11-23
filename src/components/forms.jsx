@@ -114,7 +114,6 @@ export function ProjectForm({
     category: initial?.category || defaultCategory,
     contact: initial?.contact || '',
     expectedAmount: initial?.expectedAmount ?? 0,
-    quantity: initial?.quantity ?? 1,
     skus: initial ? skuEntriesOf(initial) : [{ sku: SKUS[0], qty: 1 }],
     lastFollowUp: initial?.lastFollowUp || todayStr(),
     nextFollowUp: initial?.nextFollowUp || '',
@@ -141,7 +140,6 @@ export function ProjectForm({
     const { skus, skuQty } = entriesToPayload(form.skus);
     if (!form.name.trim()) return setError('请填写项目名称');
     if (!skus.length) return setError('请选择 SKU');
-    if (Number(form.quantity) < 1) return setError('项目数量至少为 1');
     if (Number(form.expectedAmount) <= 0) return setError('请填写预计成交金额');
     if (isSigned) {
       if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
@@ -169,7 +167,6 @@ export function ProjectForm({
         partnerId: form.partnerId || null,
         skus,
         skuQty,
-        quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
         expectedAmount: Number(form.expectedAmount),
         contractAmount: isSigned ? Number(form.contractAmount) : null,
         startDate: isSigned && !serviceOnly ? form.startDate : null,
@@ -279,16 +276,6 @@ export function ProjectForm({
         />
       </Field>
 
-      <Field label="项目数量" required hint="该项目整体的购买个数，例如用户席位 50">
-        <input
-          type="number"
-          min="1"
-          step="1"
-          value={form.quantity}
-          onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-        />
-      </Field>
-
       {isSigned && !serviceOnly && (
         <>
           <Field label="订阅开始时间" required>
@@ -325,7 +312,6 @@ export function ProjectForm({
 export function WinProjectForm({ project, onSave, onCancel }) {
   const [form, setForm] = useState({
     contractAmount: project.contractAmount ?? project.expectedAmount ?? 0,
-    quantity: project.quantity ?? 1,
     startDate: project.startDate || todayStr(),
     expiryDate: project.expiryDate || oneYearFrom(todayStr()),
     skus: skuEntriesOf(project),
@@ -342,7 +328,6 @@ export function WinProjectForm({ project, onSave, onCancel }) {
   const submit = (e) => {
     e.preventDefault();
     if (Number(form.contractAmount) <= 0) return setError('请填写成交金额');
-    if (Number(form.quantity) < 1) return setError('项目数量至少为 1');
     const { skus, skuQty } = entriesToPayload(form.skus);
     if (!skus.length) return setError('请选择 SKU');
     if (!serviceOnly) {
@@ -351,7 +336,6 @@ export function WinProjectForm({ project, onSave, onCancel }) {
     }
     onSave({
       contractAmount: Number(form.contractAmount),
-      quantity: Math.max(1, Math.trunc(Number(form.quantity)) || 1),
       startDate: serviceOnly ? null : form.startDate,
       expiryDate: serviceOnly ? null : form.expiryDate,
       skus,
@@ -366,15 +350,6 @@ export function WinProjectForm({ project, onSave, onCancel }) {
       </div>
       <Field label="成交金额（元）" required full>
         <input type="number" min="0" step="any" value={form.contractAmount} onChange={set('contractAmount')} />
-      </Field>
-      <Field label="项目数量" required hint="该项目整体的购买个数">
-        <input
-          type="number"
-          min="1"
-          step="1"
-          value={form.quantity}
-          onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-        />
       </Field>
       <Field label="SKU" required full>
         <SkuEditor value={form.skus} onChange={(skus) => setForm({ ...form, skus })} />

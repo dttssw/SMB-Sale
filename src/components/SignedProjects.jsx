@@ -91,7 +91,6 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
               <th className="col-opt">合作伙伴</th>
               <th className="col-opt">类型</th>
               <th className="col-opt">SKU</th>
-              <th className="num col-opt">数量</th>
               <th className="num">成交金额</th>
               <th className="num">订阅周期</th>
               <th>状态</th>
@@ -138,7 +137,6 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
                       )}
                     </span>
                   </td>
-                  <td className="num col-opt">{project.quantity ?? 1}</td>
                   <td className="num strong">{formatMoney(project.contractAmount)}</td>
                   <td className="num">
                     {serviceOnly ? '—' : formatDate(project.startDate)}
@@ -167,7 +165,7 @@ export default function SignedProjects({ projects, onView, onCustomer, onRenew }
             })}
             {paged.length === 0 && (
               <tr>
-                <td colSpan={9} className="empty">
+                <td colSpan={8} className="empty">
                   <div className="empty-state">
                     <p>暂无已签项目，项目赢单后会自动进入这里</p>
                   </div>

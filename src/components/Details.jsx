@@ -168,7 +168,6 @@ export function ProjectDetail({
               <Fact label="合作伙伴" value={project.partnerName || '—'} />
               <Fact label="项目联系人" value={project.contact || '—'} />
               <Fact label="SKU" value={<SkuValue project={project} />} />
-              <Fact label="项目数量" value={`${project.quantity ?? 1}`} />
               <Fact
                 label={project.status === 'won' ? '成交金额' : '预计金额'}
                 value={`${formatMoney(project.status === 'won' ? project.contractAmount : project.expectedAmount)} 元`}

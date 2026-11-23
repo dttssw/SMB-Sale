@@ -183,9 +183,6 @@ function validateProjectPayload(input, existing = null) {
   const expectedAmount = num(input.expectedAmount ?? existing?.expectedAmount, 0);
   if (expectedAmount < 0) throw httpError(400, '预计金额不能小于 0');
 
-  const quantityRaw = input.quantity !== undefined ? input.quantity : existing?.quantity;
-  const quantity = Math.max(1, Math.trunc(Number(quantityRaw)) || 1);
-
   const skus = parseSkus(input.skus !== undefined ? input.skus : existing?.skus);
   const serviceOnly = isServiceOnly(skus);
 
@@ -214,7 +211,6 @@ function validateProjectPayload(input, existing = null) {
         contact: trim(input.contact ?? existing?.contact),
         expectedAmount,
         contractAmount: null,
-        quantity,
         startDate: null,
         expiryDate: null,
         skus,
@@ -234,7 +230,6 @@ function validateProjectPayload(input, existing = null) {
     contact: trim(input.contact ?? existing?.contact),
     expectedAmount,
     contractAmount: status === WON ? contractAmount : null,
-    quantity,
     startDate: status === WON && !serviceOnly ? startDate : null,
     expiryDate: status === WON && serviceOnly ? null : expiryDate,
     skus,
@@ -252,11 +247,11 @@ function insertProject(input, forced = {}) {
   db.prepare(`
     INSERT INTO projects (
       id, name, customerId, partnerId, category, status, contact,
-      expectedAmount, contractAmount, quantity, skus, skuQty, lastFollowUp, nextFollowUp,
+      expectedAmount, contractAmount, skus, skuQty, lastFollowUp, nextFollowUp,
       startDate, expiryDate, sourceProjectId, lostAt, watchedAt, closedAt, createdAt
     ) VALUES (
       @id, @name, @customerId, @partnerId, @category, @status, @contact,
-      @expectedAmount, @contractAmount, @quantity, @skus, @skuQty, @lastFollowUp, @nextFollowUp,
+      @expectedAmount, @contractAmount, @skus, @skuQty, @lastFollowUp, @nextFollowUp,
       @startDate, @expiryDate, @sourceProjectId, NULL, NULL, NULL, @createdAt
     )
   `).run({
@@ -349,7 +344,6 @@ function syncRenewals() {
           status: ACTIVE,
           contact: project.contact,
           expectedAmount: project.contractAmount || project.expectedAmount || 0,
-          quantity: project.quantity,
           skus,
           skuQty: parseSkuQty(project.skuQty, skus),
           lastFollowUp: '',
@@ -694,7 +688,6 @@ app.put('/api/projects/:id', (req, res, next) => {
         contact = @contact,
         expectedAmount = @expectedAmount,
         contractAmount = @contractAmount,
-        quantity = @quantity,
         skus = @skus,
         skuQty = @skuQty,
         lastFollowUp = @lastFollowUp,
@@ -756,7 +749,6 @@ app.post('/api/projects/:id/win', (req, res, next) => {
       if (startDate > expiryDate) throw httpError(400, '订阅开始时间不能晚于到期时间');
     }
     const skuQty = parseSkuQty(body.skuQty !== undefined ? body.skuQty : existing.skuQty, skus);
-    const quantity = Math.max(1, Math.trunc(Number(body.quantity !== undefined ? body.quantity : existing.quantity)) || 1);
 
     const dealId = db.transaction(() => {
       db.prepare(`
@@ -765,7 +757,6 @@ app.post('/api/projects/:id/win', (req, res, next) => {
           contractAmount = ?,
           startDate = ?,
           expiryDate = ?,
-          quantity = ?,
           skus = ?,
           skuQty = ?,
           nextFollowUp = NULL,
@@ -777,7 +768,6 @@ app.post('/api/projects/:id/win', (req, res, next) => {
         amount,
         serviceOnly ? null : startDate,
         serviceOnly ? null : expiryDate,
-        quantity,
         JSON.stringify(skus),
         JSON.stringify(skuQty),
         existing.id
@@ -833,7 +823,6 @@ app.post('/api/projects/:id/renew', (req, res, next) => {
           body.expectedAmount !== undefined
             ? body.expectedAmount
             : source.contractAmount || source.expectedAmount || 0,
-        quantity: body.quantity !== undefined ? body.quantity : source.quantity,
         skus,
         skuQty: body.skuQty !== undefined ? body.skuQty : parseSkuQty(source.skuQty, skus),
         lastFollowUp: body.lastFollowUp || '',
